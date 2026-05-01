@@ -15,6 +15,9 @@ urlpatterns = [
 
     # API чата
     path('api/chat/', include('chat.urls')),
+
+    # API финансы
+    path('api/finance/', include('finance.urls')),
 ]
 
 if settings.DEBUG:
