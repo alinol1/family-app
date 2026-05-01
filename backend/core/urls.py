@@ -12,6 +12,9 @@ urlpatterns = [
 
     # API семьи
     path('api/families/', include('families.urls')),
+
+    # API чата
+    path('api/chat/', include('chat.urls')),
 ]
 
 if settings.DEBUG:
@@ -19,3 +22,4 @@ if settings.DEBUG:
         settings.MEDIA_URL,
         document_root=settings.MEDIA_ROOT
     )
+    
