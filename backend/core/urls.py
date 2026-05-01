@@ -9,9 +9,11 @@ urlpatterns = [
 
     # API авторизации
     path('api/auth/', include('users.urls')),
+
+    # API семьи
+    path('api/families/', include('families.urls')),
 ]
 
-# Медиафайлы (фото, документы)
 if settings.DEBUG:
     urlpatterns += static(
         settings.MEDIA_URL,
