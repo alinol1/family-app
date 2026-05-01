@@ -24,6 +24,9 @@ urlpatterns = [
 
     # API фотографии
     path('api/photos/', include('photos.urls')),
+
+    # API семейное древо
+    path('api/tree/', include('familytree.urls')),
 ]
 
 if settings.DEBUG:
