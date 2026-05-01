@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     # Сторонние приложения
     'rest_framework',                    # ДОБАВЛЕНО
     'rest_framework_simplejwt',          # ДОБАВЛЕНО
+    'rest_framework_simplejwt.token_blacklist',
     'corsheaders',                       # ДОБАВЛЕНО
     'django_filters',                    # ДОБАВЛЕНО
     
