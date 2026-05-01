@@ -47,6 +47,14 @@ INSTALLED_APPS = [
     'django_filters',                    # ДОБАВЛЕНО
     
     # Мои приложения (добавлю позже)
+    'users',
+    'families',
+    'chat',
+    'finance',
+    'documents',
+    'photos',
+    'familytree',
+    'sos',
 ]
 
 MIDDLEWARE = [
@@ -166,3 +174,6 @@ SIMPLE_JWT = {
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
 }
+
+# Кастомная модель пользователя
+AUTH_USER_MODEL = 'users.User'
