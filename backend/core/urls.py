@@ -21,6 +21,9 @@ urlpatterns = [
 
     # API документы
     path('api/documents/', include('documents.urls')),
+
+    # API фотографии
+    path('api/photos/', include('photos.urls')),
 ]
 
 if settings.DEBUG:
