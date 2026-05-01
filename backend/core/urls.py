@@ -27,6 +27,9 @@ urlpatterns = [
 
     # API семейное древо
     path('api/tree/', include('familytree.urls')),
+
+    # API SOS-сигнал
+    path('api/sos/', include('sos.urls')),
 ]
 
 if settings.DEBUG:
