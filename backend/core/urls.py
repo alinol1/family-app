@@ -18,6 +18,9 @@ urlpatterns = [
 
     # API финансы
     path('api/finance/', include('finance.urls')),
+
+    # API документы
+    path('api/documents/', include('documents.urls')),
 ]
 
 if settings.DEBUG:
