@@ -12,7 +12,7 @@ export default function LoginScreen({ navigation }) {
       <View style={styles.buttons}>
         <AppButton
           title="Войти"
-          onPress={() => navigation.navigate('FamilyChoice')}
+          onPress={() => navigation.replace('MainTabs')}
         />
 
         <View style={{ height: 12 }} />

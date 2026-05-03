@@ -1,18 +1,18 @@
-// Размеры шрифтов
-export const fontSize = {
-  xs: 11,
-  sm: 13,
-  md: 15,
-  lg: 18,
-  xl: 20,
-  xxl: 24,
-  xxxl: 32,
+export const fontFamily = {
+  soyuz: 'SoyuzGrotesk',
+  regular: 'SFProDisplayRegular',
+  medium: 'SFProDisplayMedium',
+  bold: 'SFProDisplayBold',
 };
 
-// Жирность шрифтов
-export const fontWeight = {
-  regular: '400',
-  medium: '500',
-  semibold: '600',
-  bold: '700',
+export const fontSize = {
+  displayXL: 40,
+  titleL: 32,
+  titleM: 28,
+  titleS: 20,
+  bodyL: 18,
+  bodyM: 16,
+  bodyS: 14,
+  caption: 12,
+  micro: 11,
 };

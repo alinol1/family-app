@@ -1,12 +1,21 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import { colors } from '../utils/colors';
+import { View, Text, StyleSheet, Image } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
 
 export default function SplashScreen() {
   return (
     <View style={styles.container}>
-      <Text style={styles.logo}>Маяк</Text>
-      <Text style={styles.subtitle}>Семейное приложение</Text>
+      <StatusBar style="light" />
+
+      <View style={styles.content}>
+        <Image
+          source={require('../../assets/images/splash-illustration.png')}
+          style={styles.illustration}
+          resizeMode="contain"
+        />
+
+        <Text style={styles.title}>маяк</Text>
+      </View>
     </View>
   );
 }
@@ -14,19 +23,22 @@ export default function SplashScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.primary,
+    backgroundColor: '#9452FE',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  logo: {
-    fontSize: 36,
-    fontWeight: '700',
-    color: colors.textOnPrimary,
-    marginBottom: 8,
+  content: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  subtitle: {
-    fontSize: 16,
-    color: colors.textOnPrimary,
-    opacity: 0.9,
+  illustration: {
+    width: 246,
+    height: 239,
+  },
+  title: {
+    marginTop: 30,
+    fontSize: 80,
+    color: '#FFFFFF',
+    fontFamily: 'SoyuzGrotesk',
   },
 });
