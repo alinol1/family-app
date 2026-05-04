@@ -6,7 +6,7 @@ export const fontFamily = {
 };
 
 export const fontSize = {
-  displayXL: 40,
+  displayXL: 52,
   titleL: 32,
   titleM: 28,
   titleS: 20,

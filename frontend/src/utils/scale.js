@@ -2,17 +2,17 @@ import { Dimensions } from 'react-native';
 
 const { width, height } = Dimensions.get('window');
 
-// Базовые размеры макета из Figma
+// Базовый макет
 const guidelineBaseWidth = 375;
 const guidelineBaseHeight = 812;
 
-// Масштабирование по ширине
-export const scale = (size) => (width / guidelineBaseWidth) * size;
+// Ограничиваем ширину, чтобы на планшетах и web не раздувало интерфейс
+const effectiveWidth = Math.min(width, 430);
 
-// Масштабирование по высоте
+export const scale = (size) => (effectiveWidth / guidelineBaseWidth) * size;
+
 export const verticalScale = (size) => (height / guidelineBaseHeight) * size;
 
-// Мягкое масштабирование
-export const moderateScale = (size, factor = 2) => {
+export const moderateScale = (size, factor = 0.35) => {
   return size + (scale(size) - size) * factor;
 };
