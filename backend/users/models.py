@@ -1,3 +1,5 @@
+import random
+
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 
@@ -64,3 +66,43 @@ class User(AbstractUser):
 
     def __str__(self):
         return f'{self.first_name} {self.last_name} ({self.username})'
+
+
+class PasswordResetCode(models.Model):
+    """
+    Код для сброса пароля.
+    Отправляется на email пользователя.
+    """
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='reset_codes',
+        verbose_name='Пользователь'
+    )
+
+    code = models.CharField(
+        max_length=6,
+        verbose_name='Код'
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name='Создан'
+    )
+
+    is_used = models.BooleanField(
+        default=False,
+        verbose_name='Использован'
+    )
+
+    class Meta:
+        verbose_name = 'Код сброса пароля'
+        verbose_name_plural = 'Коды сброса пароля'
+
+    def __str__(self):
+        return f'{self.user.email} — {self.code}'
+
+    @staticmethod
+    def generate_code():
+        return str(random.randint(100000, 999999))

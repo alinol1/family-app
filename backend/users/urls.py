@@ -8,7 +8,12 @@ from .views import (
     UserProfileView,
     ChangePasswordView,
     LogoutView,
+    PasswordResetRequestView,
+    PasswordResetVerifyView,
+    PasswordResetConfirmView,
 )
+
+
 
 urlpatterns = [
     # Регистрация
@@ -28,4 +33,9 @@ urlpatterns = [
 
     # Выход
     path('logout/', LogoutView.as_view(), name='logout'),
+    
+    # Сброс пароля
+    path('password-reset/', PasswordResetRequestView.as_view(), name='password_reset'),
+    path('password-reset/verify/', PasswordResetVerifyView.as_view(), name='password_reset_verify'),
+    path('password-reset/confirm/', PasswordResetConfirmView.as_view(), name='password_reset_confirm'),
 ]

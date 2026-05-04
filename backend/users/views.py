@@ -10,6 +10,17 @@ from .serializers import (
     ChangePasswordSerializer
 )
 
+from django.core.mail import send_mail
+from django.conf import settings
+from django.utils import timezone
+from datetime import timedelta
+from .models import PasswordResetCode
+from .serializers import (
+    PasswordResetRequestSerializer,
+    PasswordResetVerifySerializer,
+    PasswordResetConfirmSerializer,
+)
+
 
 class RegisterView(generics.CreateAPIView):
     """
@@ -92,3 +103,164 @@ class LogoutView(APIView):
                 {'error': 'Что-то пошло не так'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        
+
+class PasswordResetRequestView(APIView):
+    """
+    Запрос на сброс пароля.
+    POST /api/auth/password-reset/
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = PasswordResetRequestSerializer(data=request.data)
+
+        if serializer.is_valid():
+            email = serializer.validated_data['email'].lower()
+
+            try:
+                user = User.objects.get(email=email)
+            except User.DoesNotExist:
+                # Не говорим что пользователь не найден (безопасность)
+                return Response(
+                    {'message': 'Если аккаунт существует, письмо отправлено'},
+                    status=status.HTTP_200_OK
+                )
+
+            # Генерируем код
+            code = PasswordResetCode.generate_code()
+
+            # Сохраняем код
+            PasswordResetCode.objects.create(
+                user=user,
+                code=code
+            )
+
+            # Отправляем письмо
+            try:
+                send_mail(
+                    subject='Маяк — Сброс пароля',
+                    message=f'Ваш код для сброса пароля: {code}\n\nКод действителен 15 минут.',
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[email],
+                    fail_silently=False,
+                )
+            except Exception as e:
+                print(f'Ошибка отправки email: {e}')
+                return Response(
+                    {'error': 'Не удалось отправить письмо'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+            return Response(
+                {'message': 'Если аккаунт существует, письмо отправлено'},
+                status=status.HTTP_200_OK
+            )
+
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+class PasswordResetVerifyView(APIView):
+    """
+    Проверка кода сброса.
+    POST /api/auth/password-reset/verify/
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = PasswordResetVerifySerializer(data=request.data)
+
+        if serializer.is_valid():
+            email = serializer.validated_data['email'].lower()
+            code = serializer.validated_data['code']
+
+            try:
+                user = User.objects.get(email=email)
+            except User.DoesNotExist:
+                return Response(
+                    {'error': 'Неверный код'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Ищем код не старше 15 минут
+            reset_code = PasswordResetCode.objects.filter(
+                user=user,
+                code=code,
+                is_used=False,
+                created_at__gte=timezone.now() - timedelta(minutes=15)
+            ).last()
+
+            if not reset_code:
+                return Response(
+                    {'error': 'Неверный или просроченный код'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            return Response(
+                {'message': 'Код подтверждён'},
+                status=status.HTTP_200_OK
+            )
+
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+class PasswordResetConfirmView(APIView):
+    """
+    Установка нового пароля.
+    POST /api/auth/password-reset/confirm/
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+
+        if serializer.is_valid():
+            email = serializer.validated_data['email'].lower()
+            code = serializer.validated_data['code']
+            new_password = serializer.validated_data['new_password']
+
+            try:
+                user = User.objects.get(email=email)
+            except User.DoesNotExist:
+                return Response(
+                    {'error': 'Пользователь не найден'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Проверяем код
+            reset_code = PasswordResetCode.objects.filter(
+                user=user,
+                code=code,
+                is_used=False,
+                created_at__gte=timezone.now() - timedelta(minutes=15)
+            ).last()
+
+            if not reset_code:
+                return Response(
+                    {'error': 'Неверный или просроченный код'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Меняем пароль
+            user.set_password(new_password)
+            user.save()
+
+            # Отмечаем код как использованный
+            reset_code.is_used = True
+            reset_code.save()
+
+            return Response(
+                {'message': 'Пароль успешно изменён'},
+                status=status.HTTP_200_OK
+            )
+
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )

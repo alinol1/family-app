@@ -116,3 +116,34 @@ class ChangePasswordSerializer(serializers.Serializer):
                 {'new_password': 'Пароли не совпадают'}
             )
         return attrs
+    
+class PasswordResetRequestSerializer(serializers.Serializer):
+    """
+    Запрос на сброс пароля — принимает email.
+    """
+    email = serializers.EmailField(required=True)
+
+
+class PasswordResetVerifySerializer(serializers.Serializer):
+    """
+    Проверка кода сброса.
+    """
+    email = serializers.EmailField(required=True)
+    code = serializers.CharField(max_length=6, required=True)
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    """
+    Установка нового пароля.
+    """
+    email = serializers.EmailField(required=True)
+    code = serializers.CharField(max_length=6, required=True)
+    new_password = serializers.CharField(required=True)
+    new_password2 = serializers.CharField(required=True)
+
+    def validate(self, attrs):
+        if attrs['new_password'] != attrs['new_password2']:
+            raise serializers.ValidationError(
+                {'new_password': 'Пароли не совпадают'}
+            )
+        return attrs
