@@ -296,7 +296,7 @@ const styles = StyleSheet.create({
   loginButton: {
     width: '100%',
     height: layout.buttonHeight,
-    borderRadius: 16,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: '#FFFFFF',
     backgroundColor: 'transparent',
@@ -313,7 +313,7 @@ const styles = StyleSheet.create({
   continueButton: {
     width: '100%',
     height: layout.buttonHeight,
-    borderRadius: 16,
+    borderRadius: 20,
     backgroundColor: '#FFFFFF',
     justifyContent: 'center',
     alignItems: 'center',
