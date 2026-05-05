@@ -19,6 +19,13 @@ import JoinFamilyScreen from '../screens/family/JoinFamilyScreen';
 
 import MainTabNavigator from './MainTabNavigator';
 
+import SettingsScreen from '../screens/profile/SettingsScreen';
+
+import DocumentsScreen from '../screens/modules/DocumentsScreen';
+import FinanceScreen from '../screens/modules/FinanceScreen';
+import PhotosScreen from '../screens/modules/PhotosScreen';
+import FamilyTreeScreen from '../screens/modules/FamilyTreeScreen';
+
 const Stack = createNativeStackNavigator();
 
 export default function AppNavigator() {
@@ -53,6 +60,13 @@ export default function AppNavigator() {
       <Stack.Screen name="JoinFamily" component={JoinFamilyScreen} />
 
       <Stack.Screen name="MainTabs" component={MainTabNavigator} />
+
+      <Stack.Screen name="Settings" component={SettingsScreen} />
+
+      <Stack.Screen name="Documents" component={DocumentsScreen} />
+      <Stack.Screen name="Finance" component={FinanceScreen} />
+      <Stack.Screen name="Photos" component={PhotosScreen} />
+      <Stack.Screen name="FamilyTree" component={FamilyTreeScreen} />
     </Stack.Navigator>
   );
 }

@@ -198,7 +198,19 @@ export default function LoginScreen({ navigation }) {
             </Text>
           </TouchableOpacity>
 
+
         </ScrollView>
+
+          {/* ВРЕМЕННО: быстрый вход */}
+          <TouchableOpacity
+            style={styles.tempButton}
+            activeOpacity={0.7}
+            onPress={() => navigation.replace('MainTabs')}
+          >
+            <Text style={styles.tempButtonText} allowFontScaling={false}>
+              Зайти (временно)
+            </Text>
+          </TouchableOpacity>
 
         {/* Нет аккаунта — прижато к низу */}
         <View style={[styles.linkContainer, { paddingHorizontal: screenPadding }]}>

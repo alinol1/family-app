@@ -14,7 +14,7 @@ export default function ChatsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: '#CBCBCB',
     justifyContent: 'center',
     alignItems: 'center',
   },

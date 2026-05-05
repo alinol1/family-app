@@ -50,3 +50,30 @@ export const isAuthenticated = async () => {
   const token = await AsyncStorage.getItem('access_token');
   return !!token;
 };
+
+
+// Запросить сброс пароля
+export const requestPasswordReset = async (email) => {
+  const response = await client.post('/auth/password-reset/', { email });
+  return response.data;
+};
+
+// Проверить код сброса
+export const verifyPasswordResetCode = async (email, code) => {
+  const response = await client.post('/auth/password-reset/verify/', {
+    email,
+    code,
+  });
+  return response.data;
+};
+
+// Подтвердить новый пароль
+export const confirmPasswordReset = async (email, code, newPassword, newPassword2) => {
+  const response = await client.post('/auth/password-reset/confirm/', {
+    email,
+    code,
+    new_password: newPassword,
+    new_password2: newPassword2,
+  });
+  return response.data;
+};
