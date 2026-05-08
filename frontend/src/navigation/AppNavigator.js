@@ -26,6 +26,8 @@ import FinanceScreen from '../screens/modules/FinanceScreen';
 import PhotosScreen from '../screens/modules/PhotosScreen';
 import FamilyTreeScreen from '../screens/modules/FamilyTreeScreen';
 
+import ChatDetailScreen from '../screens/main/ChatDetailScreen';
+
 const Stack = createNativeStackNavigator();
 
 export default function AppNavigator() {
@@ -67,6 +69,8 @@ export default function AppNavigator() {
       <Stack.Screen name="Finance" component={FinanceScreen} />
       <Stack.Screen name="Photos" component={PhotosScreen} />
       <Stack.Screen name="FamilyTree" component={FamilyTreeScreen} />
+      
+      <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
     </Stack.Navigator>
   );
 }

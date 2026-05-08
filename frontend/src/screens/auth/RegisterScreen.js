@@ -110,7 +110,7 @@ export default function RegisterScreen({ navigation }) {
 
       await login(email.trim().toLowerCase(), password);
 
-      navigation.replace('FamilyChoice');
+      navigation.replace('CreateFamily');
     } catch (error) {
       const errorData = error.response?.data;
       console.log('Ошибка регистрации:', JSON.stringify(errorData));

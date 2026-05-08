@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Адрес нашего сервера
 // Важно: замени на свой IP если тестируешь на реальном телефоне
-const BASE_URL = 'http://127.0.0.1:8000/api';
+const BASE_URL = 'http://192.168.3.2:8000/api';
 
 // Создаём axios клиент
 const client = axios.create({
