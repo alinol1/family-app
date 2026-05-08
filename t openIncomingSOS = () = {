@@ -1,0 +1,28 @@
+[33mbc08f34[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m тут готов экран безопасности с сос кнопкой
+[33m90b64e5[m[33m ([m[1;31morigin/main[m[33m)[m сделали дизайн чата, пока не настроили
+[33mcf875cf[m дизайн главного экрана,настроены экраны модулей и навигация с главной
+[33m930a7b6[m feat: добавлен API сброса пароля с отправкой email
+[33mf5738a4[m feat: экран Входа с реальной авторизацией
+[33m0dbeb5f[m feat: добавлен экран Onboarding 3
+[33mf1fb5b2[m refactor: улучшена адаптивная логика экрана Onboarding 1
+[33m7251a53[m feat: добавлен каркас onboarding и начата адаптация дизайна
+[33mc6daa66[m feat: добавлены onboarding и экраны восстановления пароля без дизайна
+[33m3b88768[m feat: создан frontend проект с API клиентом
+[33m467311f[m feat: создан API SOS
+[33m7443103[m feat: создан API семейного древа
+[33m19cf6ad[m feat: создан API фотографий
+[33mea8d628[m feat: создан API документов
+[33mcb7bc28[m feat: создан API финансов
+[33m15adfa2[m feat: создан API чата
+[33md474a6f[m feat: создан API семьи
+[33m59b25c9[m feat: протестирован API авторизации
+[33md323669[m feat: создана модель SOSSignal
+[33m84cb5ba[m feat: создана модель FamilyTreeNode
+[33med89118[m feat: создана модель Photo
+[33m00e046c[m feat: добавлена модель Document с тремя уровнями доступа
+[33me0249c4[m feat: созданы модели Category, FinanceRecord, FamilyGoal
+[33m3a46ef0[m feat: созданы модели Chat и Message
+[33m50e9588[m feat: созданы модели Family и FamilyMember
+[33mee503aa[m добавили модель User
+[33meb60286[m feat: создан Django проект с настройками PostgreSQL
+[33m52d6fb4[m Initial commit: создание структуры проекта

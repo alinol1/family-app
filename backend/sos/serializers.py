@@ -58,13 +58,14 @@ class SOSSignalSerializer(serializers.ModelSerializer):
         ]
 
     def get_sender_name(self, obj):
-        return f'{obj.sender.first_name} {obj.sender.last_name}'
-
+        name = f'{obj.sender.first_name} {obj.sender.last_name}'.strip()
+        return name or obj.sender.username
+    
     def get_confirmed_by_names(self, obj):
         return [
             {
                 'id': user.id,
-                'name': f'{user.first_name} {user.last_name}',
+                'name': f'{user.first_name} {user.last_name}'.strip() or user.username,
             }
             for user in obj.confirmed_by.all()
         ]

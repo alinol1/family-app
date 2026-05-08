@@ -55,6 +55,8 @@ class ChatSerializer(serializers.ModelSerializer):
     # Название чата
     chat_name = serializers.SerializerMethodField()
 
+    members_count = serializers.SerializerMethodField()
+
     class Meta:
         model = Chat
         fields = [
@@ -65,8 +67,12 @@ class ChatSerializer(serializers.ModelSerializer):
             'last_message',
             'unread_count',
             'created_at',
+            'members_count',
         ]
 
+    def get_members_count(self, obj):
+        return obj.members.count()
+    
     def get_last_message(self, obj):
         last = obj.messages.last()
         if last:
@@ -85,7 +91,7 @@ class ChatSerializer(serializers.ModelSerializer):
 
     def get_chat_name(self, obj):
         if obj.chat_type == 'family':
-            return f'Семейный чат — {obj.family.name}'
+            return obj.family.name
 
         # Для личного чата показываем имя собеседника
         user = self.context.get('request').user

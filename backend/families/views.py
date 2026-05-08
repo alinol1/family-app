@@ -8,7 +8,7 @@ from .serializers import (
     CreateFamilySerializer,
     JoinFamilySerializer,
 )
-
+from chat.models import Chat
 
 class CreateFamilyView(APIView):
     """
@@ -39,6 +39,15 @@ class CreateFamilyView(APIView):
                 user=request.user,
                 family=family
             )
+
+            # Создаём общий чат только для этой семьи
+            family_chat = Chat.objects.create(
+                chat_type='family',
+                family=family
+            )
+
+            # Добавляем создателя семьи в общий чат
+            family_chat.members.add(request.user)
 
             # Меняем роль пользователя на администратора
             request.user.role = 'admin'
@@ -84,11 +93,47 @@ class JoinFamilyView(APIView):
                     status=status.HTTP_404_NOT_FOUND
                 )
 
+            # Запоминаем участников семьи ДО добавления нового пользователя
+            existing_members = FamilyMember.objects.filter(family=family)
+
             # Добавляем пользователя в семью
             FamilyMember.objects.create(
                 user=request.user,
                 family=family
             )
+
+            # Добавляем пользователя в общий семейный чат
+            family_chat = Chat.objects.filter(
+                family=family,
+                chat_type='family'
+            ).first()
+
+            if family_chat:
+                family_chat.members.add(request.user)
+
+            # Создаём личные чаты нового пользователя
+            # со всеми участниками этой семьи
+            for member in existing_members:
+                other_user = member.user
+
+                # Проверяем, нет ли уже личного чата между ними
+                existing_personal_chat = Chat.objects.filter(
+                    chat_type='personal',
+                    family=family,
+                    members=request.user
+                ).filter(
+                    members=other_user
+                ).first()
+
+                if not existing_personal_chat:
+                    personal_chat = Chat.objects.create(
+                        chat_type='personal',
+                        family=family
+                    )
+
+                    personal_chat.members.add(request.user, other_user)
+
+
 
             return Response(
                 FamilySerializer(family).data,
