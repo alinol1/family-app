@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { View } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import SplashScreen from '../screens/SplashScreen';
@@ -26,7 +27,7 @@ import FinanceScreen from '../screens/modules/FinanceScreen';
 import PhotosScreen from '../screens/modules/PhotosScreen';
 import FamilyTreeScreen from '../screens/modules/FamilyTreeScreen';
 
-import ChatDetailScreen from '../screens/main/ChatDetailScreen';
+import SOSGlobalOverlay from '../components/SOSGlobalOverlay';
 
 const Stack = createNativeStackNavigator();
 
@@ -46,31 +47,33 @@ export default function AppNavigator() {
   }
 
   return (
-    <Stack.Navigator screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="Onboarding1" component={Onboarding1Screen} />
-      <Stack.Screen name="Onboarding2" component={Onboarding2Screen} />
-      <Stack.Screen name="Onboarding3" component={Onboarding3Screen} />
+    <View style={{ flex: 1 }}>
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="Onboarding1" component={Onboarding1Screen} />
+        <Stack.Screen name="Onboarding2" component={Onboarding2Screen} />
+        <Stack.Screen name="Onboarding3" component={Onboarding3Screen} />
 
-      <Stack.Screen name="Login" component={LoginScreen} />
-      <Stack.Screen name="Register" component={RegisterScreen} />
-      <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
-      <Stack.Screen name="ResetPasswordSent" component={ResetPasswordSentScreen} />
-      <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} />
+        <Stack.Screen name="Login" component={LoginScreen} />
+        <Stack.Screen name="Register" component={RegisterScreen} />
+        <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+        <Stack.Screen name="ResetPasswordSent" component={ResetPasswordSentScreen} />
+        <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} />
 
-      <Stack.Screen name="FamilyChoice" component={FamilyChoiceScreen} />
-      <Stack.Screen name="CreateFamily" component={CreateFamilyScreen} />
-      <Stack.Screen name="JoinFamily" component={JoinFamilyScreen} />
+        <Stack.Screen name="FamilyChoice" component={FamilyChoiceScreen} />
+        <Stack.Screen name="CreateFamily" component={CreateFamilyScreen} />
+        <Stack.Screen name="JoinFamily" component={JoinFamilyScreen} />
 
-      <Stack.Screen name="MainTabs" component={MainTabNavigator} />
+        <Stack.Screen name="MainTabs" component={MainTabNavigator} />
 
-      <Stack.Screen name="Settings" component={SettingsScreen} />
+        <Stack.Screen name="Settings" component={SettingsScreen} />
 
-      <Stack.Screen name="Documents" component={DocumentsScreen} />
-      <Stack.Screen name="Finance" component={FinanceScreen} />
-      <Stack.Screen name="Photos" component={PhotosScreen} />
-      <Stack.Screen name="FamilyTree" component={FamilyTreeScreen} />
-      
-      <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
-    </Stack.Navigator>
+        <Stack.Screen name="Documents" component={DocumentsScreen} />
+        <Stack.Screen name="Finance" component={FinanceScreen} />
+        <Stack.Screen name="Photos" component={PhotosScreen} />
+        <Stack.Screen name="FamilyTree" component={FamilyTreeScreen} />
+      </Stack.Navigator>
+
+      <SOSGlobalOverlay />
+    </View>
   );
 }
