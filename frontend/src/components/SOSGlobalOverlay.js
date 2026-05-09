@@ -3,14 +3,12 @@ import {
   View,
   Text,
   StyleSheet,
-  TouchableOpacity,
   Animated,
   Modal,
   Platform,
 } from 'react-native';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { fontFamily } from '../utils/fonts';
@@ -36,34 +34,26 @@ function getToastText(type, name) {
   return '';
 }
 
-function normalizeUser(data, prefix) {
-  return data?.[prefix] || {
-    id: data?.[`${prefix}_id`],
-    name: data?.[`${prefix}_name`],
+function getEventUser(data, key) {
+  return data?.[key] || {
+    id: data?.[`${key}_id`],
+    name: data?.[`${key}_name`],
   };
 }
 
 export default function SOSGlobalOverlay() {
-  const navigation = useNavigation();
-
   const socketRef = useRef(null);
   const currentUserIdRef = useRef(null);
+  const toastTimerRef = useRef(null);
 
   const toastTranslateY = useRef(new Animated.Value(-120)).current;
   const toastOpacity = useRef(new Animated.Value(0)).current;
-  const toastTimerRef = useRef(null);
 
   const [toastVisible, setToastVisible] = useState(false);
   const [toastText, setToastText] = useState('');
 
-  const [incomingVisible, setIncomingVisible] = useState(false);
-  const [incomingSenderName, setIncomingSenderName] = useState('Пользователь');
-  const [incomingSignal, setIncomingSignal] = useState(null);
-
   const showToast = (text) => {
     if (!text) return;
-
-    console.log('GLOBAL SOS TOAST:', text);
 
     if (toastTimerRef.current) {
       clearTimeout(toastTimerRef.current);
@@ -107,46 +97,18 @@ export default function SOSGlobalOverlay() {
     }, 3000);
   };
 
-  const openSOSScreen = () => {
-    setIncomingVisible(false);
-
-    navigation.navigate('SOS', {
-      signal: incomingSignal,
-    });
-  };
-
-  const closeModalButKeepSOS = () => {
-    setIncomingVisible(false);
-  };
-
-  const handleSOSAlert = (data) => {
-    const signal = data.signal;
-
-    if (!signal) return;
-
-    if (signal.sender === currentUserIdRef.current) {
-      return;
-    }
-
-    setIncomingSignal(signal);
-    setIncomingSenderName(signal.sender_name || 'Пользователь');
-    setIncomingVisible(true);
-  };
-
   const handleSOSConfirmed = (data) => {
     const signal = data.signal;
-
-    const confirmedBy =
-      normalizeUser(data, 'confirmed_by') ||
-      normalizeUser(data, 'confirmedBy');
+    const confirmedBy = getEventUser(data, 'confirmed_by');
 
     if (!signal || !confirmedBy) return;
 
-    const confirmedById = Number(confirmedBy.id);
     const currentUserId = Number(currentUserIdRef.current);
+    const signalSenderId = Number(signal.sender);
+    const confirmedById = Number(confirmedBy.id);
     const confirmedByName = confirmedBy.name || 'Пользователь';
 
-    if (Number(signal.sender) === currentUserId) {
+    if (signalSenderId === currentUserId) {
       showToast(getToastText('confirmed_by_relative', confirmedByName));
       return;
     }
@@ -157,17 +119,12 @@ export default function SOSGlobalOverlay() {
   };
 
   const handleSOSCancelled = (data) => {
-    const cancelledBy =
-      normalizeUser(data, 'cancelled_by') ||
-      normalizeUser(data, 'cancelledBy');
-
-    setIncomingVisible(false);
-    setIncomingSignal(null);
+    const cancelledBy = getEventUser(data, 'cancelled_by');
 
     if (!cancelledBy) return;
 
-    const cancelledById = Number(cancelledBy.id);
     const currentUserId = Number(currentUserIdRef.current);
+    const cancelledById = Number(cancelledBy.id);
     const cancelledByName = cancelledBy.name || 'Пользователь';
 
     if (cancelledById !== currentUserId) {
@@ -184,17 +141,17 @@ export default function SOSGlobalOverlay() {
     socketRef.current = socket;
 
     socket.onopen = () => {
-      console.log('Global SOS WebSocket подключён');
+      console.log('Global SOS Overlay WebSocket подключён');
     };
 
     socket.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
 
-        console.log('GLOBAL SOS EVENT:', data);
-
+        // ВАЖНО:
+        // sos_alert здесь НЕ показываем,
+        // чтобы не было второго большого SOS-уведомления.
         if (data.type === 'sos_alert') {
-          handleSOSAlert(data);
           return;
         }
 
@@ -207,16 +164,16 @@ export default function SOSGlobalOverlay() {
           handleSOSCancelled(data);
         }
       } catch (error) {
-        console.log('Ошибка обработки Global SOS события:', error);
+        console.log('Ошибка обработки Global SOS Overlay:', error);
       }
     };
 
     socket.onerror = (error) => {
-      console.log('Global SOS WebSocket ошибка:', error);
+      console.log('Global SOS Overlay WebSocket ошибка:', error);
     };
 
     socket.onclose = () => {
-      console.log('Global SOS WebSocket закрыт');
+      console.log('Global SOS Overlay WebSocket закрыт');
     };
   };
 
@@ -247,88 +204,30 @@ export default function SOSGlobalOverlay() {
   }, []);
 
   return (
-    <>
-      <Modal
-        visible={toastVisible}
-        transparent
-        animationType="none"
-        statusBarTranslucent
-      >
-        <View pointerEvents="none" style={styles.toastOverlay}>
-          <Animated.View
-            style={[
-              styles.toast,
-              {
-                opacity: toastOpacity,
-                transform: [{ translateY: toastTranslateY }],
-              },
-            ]}
-          >
-            <Ionicons name="checkmark-circle" size={22} color="#41BF67" />
+    <Modal
+      visible={toastVisible}
+      transparent
+      animationType="none"
+      statusBarTranslucent
+    >
+      <View pointerEvents="none" style={styles.toastOverlay}>
+        <Animated.View
+          style={[
+            styles.toast,
+            {
+              opacity: toastOpacity,
+              transform: [{ translateY: toastTranslateY }],
+            },
+          ]}
+        >
+          <Ionicons name="checkmark-circle" size={22} color="#41BF67" />
 
-            <Text style={styles.toastText} allowFontScaling={false}>
-              {toastText}
-            </Text>
-          </Animated.View>
-        </View>
-      </Modal>
-
-      <Modal
-        visible={incomingVisible}
-        transparent
-        animationType="fade"
-        statusBarTranslucent
-        onRequestClose={closeModalButKeepSOS}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalIcon}>
-              <Ionicons name="warning" size={34} color="#FFFFFF" />
-            </View>
-
-            <Text style={styles.modalTitle} allowFontScaling={false}>
-              SOS-сигнал
-            </Text>
-
-            <Text style={styles.modalText} allowFontScaling={false}>
-              {incomingSenderName} отправил сигнал тревоги. Возможно, ему нужна помощь.
-            </Text>
-
-            <TouchableOpacity
-              style={styles.primaryButton}
-              activeOpacity={0.85}
-              onPress={openSOSScreen}
-            >
-              <Text style={styles.primaryButtonText} allowFontScaling={false}>
-                Открыть
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.secondaryButton}
-              activeOpacity={0.85}
-              onPress={openSOSScreen}
-            >
-              <Ionicons name="call" size={20} color="#FA4B4B" />
-
-              <Text style={styles.secondaryButtonText} allowFontScaling={false}>
-                Позвонить
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.closeButton}
-              activeOpacity={0.7}
-              onPress={closeModalButKeepSOS}
-            >
-              <Text style={styles.closeButtonText} allowFontScaling={false}>
-                Закрыть
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-    </>
+          <Text style={styles.toastText} allowFontScaling={false}>
+            {toastText}
+          </Text>
+        </Animated.View>
+      </View>
+    </Modal>
   );
 }
 
@@ -348,9 +247,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
 
     shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 8 },
+    shadowOffset: {
+      width: 0,
+      height: 8,
+    },
     shadowOpacity: 0.12,
     shadowRadius: 18,
+
     elevation: 10,
   },
 
@@ -360,90 +263,5 @@ const styles = StyleSheet.create({
     fontFamily: fontFamily.medium,
     fontSize: 15,
     color: '#313131',
-  },
-
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 24,
-  },
-
-  modalCard: {
-    width: '100%',
-    borderRadius: 28,
-    backgroundColor: '#FFFFFF',
-    padding: 22,
-    alignItems: 'center',
-  },
-
-  modalIcon: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
-    backgroundColor: '#FA4B4B',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 14,
-  },
-
-  modalTitle: {
-    fontFamily: fontFamily.bold,
-    fontSize: 26,
-    color: '#262626',
-    marginBottom: 8,
-  },
-
-  modalText: {
-    fontFamily: fontFamily.regular,
-    fontSize: 17,
-    lineHeight: 23,
-    color: '#606060',
-    textAlign: 'center',
-    marginBottom: 20,
-  },
-
-  primaryButton: {
-    width: '100%',
-    height: 54,
-    borderRadius: 18,
-    backgroundColor: '#FA4B4B',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
-  primaryButtonText: {
-    fontFamily: fontFamily.medium,
-    fontSize: 18,
-    color: '#FFFFFF',
-  },
-
-  secondaryButton: {
-    width: '100%',
-    height: 54,
-    borderRadius: 18,
-    backgroundColor: '#F6F6F6',
-    justifyContent: 'center',
-    alignItems: 'center',
-    flexDirection: 'row',
-    marginTop: 8,
-  },
-
-  secondaryButtonText: {
-    marginLeft: 8,
-    fontFamily: fontFamily.medium,
-    fontSize: 18,
-    color: '#FA4B4B',
-  },
-
-  closeButton: {
-    marginTop: 14,
-  },
-
-  closeButtonText: {
-    fontFamily: fontFamily.regular,
-    fontSize: 16,
-    color: '#8A8A8A',
   },
 });
