@@ -80,22 +80,6 @@ function formatActiveTime(seconds) {
   return `${String(minutes).padStart(2, '0')}:${String(restSeconds).padStart(2, '0')}`;
 }
 
-function getToastText(type, name) {
-  if (type === 'confirmed_by_me') {
-    return 'Вы подтвердили получение сигнала';
-  }
-
-  if (type === 'confirmed_by_relative') {
-    return `${name} увидел сигнал`;
-  }
-
-  if (type === 'cancelled_by_relative') {
-    return `${name} отменил SOS-сигнал`;
-  }
-
-  return '';
-}
-
 export default function SOSScreen({ navigation }) {
   const { screenPadding } = useLayout();
   const { height } = useWindowDimensions();
@@ -113,9 +97,6 @@ export default function SOSScreen({ navigation }) {
   const translateY = useRef(new Animated.Value(expandedY)).current;
   const currentY = useRef(expandedY);
 
-  const toastTranslateY = useRef(new Animated.Value(-120)).current;
-  const toastOpacity = useRef(new Animated.Value(0)).current;
-
   const sosProgress = useRef(new Animated.Value(0)).current;
   const cancelProgress = useRef(new Animated.Value(0)).current;
 
@@ -129,14 +110,11 @@ export default function SOSScreen({ navigation }) {
   const [sosState, setSosState] = useState('normal');
   const [activeSeconds, setActiveSeconds] = useState(0);
 
-  const [currentUserId, setCurrentUserId] = useState(null);
   const [activeSignal, setActiveSignal] = useState(null);
   const [confirmedByNames, setConfirmedByNames] = useState([]);
 
   const [incomingSOSVisible, setIncomingSOSVisible] = useState(false);
   const [incomingSenderName, setIncomingSenderName] = useState('Пользователь');
-
-  const [toastText, setToastText] = useState('');
 
   const radius = (CIRCLE_SIZE - STROKE_WIDTH) / 2;
   const circumference = 2 * Math.PI * radius;
@@ -154,44 +132,6 @@ export default function SOSScreen({ navigation }) {
 
     return () => clearInterval(interval);
   }, [isActiveSOS]);
-
-  const showToast = (text) => {
-    if (!text) return;
-
-    setToastText(text);
-
-    toastTranslateY.setValue(-120);
-    toastOpacity.setValue(0);
-
-    Animated.parallel([
-      Animated.spring(toastTranslateY, {
-        toValue: 0,
-        useNativeDriver: true,
-        damping: 18,
-        stiffness: 160,
-      }),
-      Animated.timing(toastOpacity, {
-        toValue: 1,
-        duration: 180,
-        useNativeDriver: true,
-      }),
-    ]).start();
-
-    setTimeout(() => {
-      Animated.parallel([
-        Animated.timing(toastTranslateY, {
-          toValue: -120,
-          duration: 220,
-          useNativeDriver: true,
-        }),
-        Animated.timing(toastOpacity, {
-          toValue: 0,
-          duration: 220,
-          useNativeDriver: true,
-        }),
-      ]).start();
-    }, 3000);
-  };
 
   const resetToNormal = () => {
     setSosState('normal');
@@ -237,52 +177,43 @@ export default function SOSScreen({ navigation }) {
     };
 
     socket.onmessage = (event) => {
-      const data = JSON.parse(event.data);
+      try {
+        const data = JSON.parse(event.data);
 
-      if (data.type === 'sos_alert') {
-        const signal = data.signal;
+        if (data.type === 'sos_alert') {
+          const signal = data.signal;
 
-        if (signal.sender === currentUserIdRef.current) {
-          activateSenderScreen(signal);
+          if (!signal) return;
+
+          if (Number(signal.sender) === Number(currentUserIdRef.current)) {
+            activateSenderScreen(signal);
+            return;
+          }
+
+          activateReceiverScreen(signal, true);
           return;
         }
 
-        activateReceiverScreen(signal, true);
-      }
+        if (data.type === 'sos_confirmed') {
+          const signal = data.signal;
 
-      if (data.type === 'sos_confirmed') {
-        const signal = data.signal;
-        const confirmedBy = data.confirmed_by;
-        const confirmedById = confirmedBy?.id;
-        const confirmedByName = confirmedBy?.name || 'Пользователь';
+          if (!signal) return;
 
-        if (signal) {
           setActiveSignal(signal);
           setConfirmedByNames(signal.confirmed_by_names || []);
-        }
 
-        if (signal?.sender === currentUserIdRef.current) {
-          showToast(getToastText('confirmed_by_relative', confirmedByName));
-          setSosState('senderActive');
+          if (Number(signal.sender) === Number(currentUserIdRef.current)) {
+            setSosState('senderActive');
+          }
+
           return;
         }
 
-        if (confirmedById === currentUserIdRef.current) {
-          showToast(getToastText('confirmed_by_me'));
-          setSosState('receiverActive');
+        if (data.type === 'sos_cancelled') {
+          resetToNormal();
         }
-      }
-
-      if (data.type === 'sos_cancelled') {
-        const cancelledBy = data.cancelled_by;
-        const cancelledById = cancelledBy?.id;
-        const cancelledByName = cancelledBy?.name || 'Пользователь';
-
-        resetToNormal();
-
-        if (cancelledById !== currentUserIdRef.current) {
-          showToast(getToastText('cancelled_by_relative', cancelledByName));
-        }
+      } catch (error) {
+        console.log('Ошибка обработки SOS события:', error);
       }
     };
 
@@ -299,8 +230,6 @@ export default function SOSScreen({ navigation }) {
     const initSOS = async () => {
       try {
         const profile = await getProfile();
-
-        setCurrentUserId(profile.id);
         currentUserIdRef.current = profile.id;
 
         await connectSOSWebSocket();
@@ -308,7 +237,7 @@ export default function SOSScreen({ navigation }) {
         const signal = await getActiveSOS();
 
         if (signal) {
-          if (signal.sender === profile.id) {
+          if (Number(signal.sender) === Number(profile.id)) {
             activateSenderScreen(signal);
           } else {
             activateReceiverScreen(signal, false);
@@ -362,8 +291,6 @@ export default function SOSScreen({ navigation }) {
       setActiveSignal(signal);
       setConfirmedByNames(signal.confirmed_by_names || []);
       setSosState('receiverActive');
-
-      showToast(getToastText('confirmed_by_me'));
     } catch (error) {
       console.log('Ошибка подтверждения SOS:', error.response?.data || error);
     }
@@ -546,22 +473,6 @@ export default function SOSScreen({ navigation }) {
           isActiveSOS && styles.containerActive,
         ]}
       >
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            styles.toast,
-            {
-              opacity: toastOpacity,
-              transform: [{ translateY: toastTranslateY }],
-            },
-          ]}
-        >
-          <Ionicons name="checkmark-circle" size={22} color="#41BF67" />
-          <Text style={styles.toastText} allowFontScaling={false}>
-            {toastText}
-          </Text>
-        </Animated.View>
-
         <View
           style={[
             styles.topBar,
@@ -846,6 +757,7 @@ export default function SOSScreen({ navigation }) {
                 onPress={openIncomingSOS}
               >
                 <Ionicons name="call" size={20} color="#FA4B4B" />
+
                 <Text style={styles.sosModalSecondaryText} allowFontScaling={false}>
                   Позвонить
                 </Text>
@@ -885,34 +797,6 @@ const styles = StyleSheet.create({
 
   containerActive: {
     backgroundColor: '#FA4B4B',
-  },
-
-  toast: {
-    position: 'absolute',
-    top: 12,
-    left: 16,
-    right: 16,
-    zIndex: 100,
-    minHeight: 52,
-    borderRadius: 18,
-    backgroundColor: '#FFFFFF',
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.12,
-    shadowRadius: 18,
-    elevation: 10,
-  },
-
-  toastText: {
-    flex: 1,
-    marginLeft: 8,
-    fontFamily: fontFamily.medium,
-    fontSize: 15,
-    color: '#313131',
   },
 
   topBar: {

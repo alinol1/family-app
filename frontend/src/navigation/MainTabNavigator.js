@@ -8,6 +8,7 @@ import SOSScreen from '../screens/main/SOSScreen';
 import ProfileScreen from '../screens/profile/ProfileScreen';
 
 import CustomTabBar from './CustomTabBar';
+import SOSGlobalOverlay from '../components/SOSGlobalOverlay';
 
 const Tab = createBottomTabNavigator();
 
@@ -21,22 +22,30 @@ function NotificationsScreen() {
 
 export default function MainTabNavigator() {
   return (
-    <Tab.Navigator
-      screenOptions={{
-        headerShown: false,
-      }}
-      tabBar={(props) => <CustomTabBar {...props} />}
-    >
-      <Tab.Screen name="Главная" component={HomeScreen} />
-      <Tab.Screen name="Чаты" component={ChatsScreen} />
-      <Tab.Screen name="SOS" component={SOSScreen} />
-      <Tab.Screen name="Уведомления" component={NotificationsScreen} />
-      <Tab.Screen name="Профиль" component={ProfileScreen} />
-    </Tab.Navigator>
+    <View style={styles.container}>
+      <Tab.Navigator
+        screenOptions={{
+          headerShown: false,
+        }}
+        tabBar={(props) => <CustomTabBar {...props} />}
+      >
+        <Tab.Screen name="Главная" component={HomeScreen} />
+        <Tab.Screen name="Чаты" component={ChatsScreen} />
+        <Tab.Screen name="SOS" component={SOSScreen} />
+        <Tab.Screen name="Уведомления" component={NotificationsScreen} />
+        <Tab.Screen name="Профиль" component={ProfileScreen} />
+      </Tab.Navigator>
+
+      <SOSGlobalOverlay />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+
   placeholder: {
     flex: 1,
     backgroundColor: '#FFFFFF',

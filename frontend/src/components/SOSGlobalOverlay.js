@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   Animated,
-  Modal,
   Platform,
 } from 'react-native';
 
@@ -49,7 +48,6 @@ export default function SOSGlobalOverlay() {
   const toastTranslateY = useRef(new Animated.Value(-120)).current;
   const toastOpacity = useRef(new Animated.Value(0)).current;
 
-  const [toastVisible, setToastVisible] = useState(false);
   const [toastText, setToastText] = useState('');
 
   const showToast = (text) => {
@@ -60,7 +58,6 @@ export default function SOSGlobalOverlay() {
     }
 
     setToastText(text);
-    setToastVisible(true);
 
     toastTranslateY.setValue(-120);
     toastOpacity.setValue(0);
@@ -91,9 +88,7 @@ export default function SOSGlobalOverlay() {
           duration: 220,
           useNativeDriver: true,
         }),
-      ]).start(() => {
-        setToastVisible(false);
-      });
+      ]).start();
     }, 3000);
   };
 
@@ -141,16 +136,15 @@ export default function SOSGlobalOverlay() {
     socketRef.current = socket;
 
     socket.onopen = () => {
-      console.log('Global SOS Overlay WebSocket подключён');
+      console.log('Global SOS mini notifications подключены');
     };
 
     socket.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
 
-        // ВАЖНО:
-        // sos_alert здесь НЕ показываем,
-        // чтобы не было второго большого SOS-уведомления.
+        // Большой SOS-сигнал здесь НЕ показываем.
+        // Он остаётся в SOSScreen.
         if (data.type === 'sos_alert') {
           return;
         }
@@ -164,16 +158,16 @@ export default function SOSGlobalOverlay() {
           handleSOSCancelled(data);
         }
       } catch (error) {
-        console.log('Ошибка обработки Global SOS Overlay:', error);
+        console.log('Ошибка обработки глобального SOS-уведомления:', error);
       }
     };
 
     socket.onerror = (error) => {
-      console.log('Global SOS Overlay WebSocket ошибка:', error);
+      console.log('Global SOS mini notifications ошибка:', error);
     };
 
     socket.onclose = () => {
-      console.log('Global SOS Overlay WebSocket закрыт');
+      console.log('Global SOS mini notifications закрыты');
     };
   };
 
@@ -181,12 +175,13 @@ export default function SOSGlobalOverlay() {
     const init = async () => {
       try {
         const profile = await getProfile();
+
         currentUserIdRef.current = profile.id;
 
         await connectSocket();
       } catch (error) {
         console.log(
-          'Ошибка запуска Global SOS Overlay:',
+          'Ошибка запуска глобальных SOS-уведомлений:',
           error.response?.data || error
         );
       }
@@ -204,38 +199,34 @@ export default function SOSGlobalOverlay() {
   }, []);
 
   return (
-    <Modal
-      visible={toastVisible}
-      transparent
-      animationType="none"
-      statusBarTranslucent
-    >
-      <View pointerEvents="none" style={styles.toastOverlay}>
-        <Animated.View
-          style={[
-            styles.toast,
-            {
-              opacity: toastOpacity,
-              transform: [{ translateY: toastTranslateY }],
-            },
-          ]}
-        >
-          <Ionicons name="checkmark-circle" size={22} color="#41BF67" />
+    <View pointerEvents="none" style={styles.overlay}>
+      <Animated.View
+        style={[
+          styles.toast,
+          {
+            opacity: toastOpacity,
+            transform: [{ translateY: toastTranslateY }],
+          },
+        ]}
+      >
+        <Ionicons name="checkmark-circle" size={22} color="#41BF67" />
 
-          <Text style={styles.toastText} allowFontScaling={false}>
-            {toastText}
-          </Text>
-        </Animated.View>
-      </View>
-    </Modal>
+        <Text style={styles.toastText} allowFontScaling={false}>
+          {toastText}
+        </Text>
+      </Animated.View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  toastOverlay: {
-    flex: 1,
-    paddingTop: 12,
-    paddingHorizontal: 16,
+  overlay: {
+    position: 'absolute',
+    top: 25,
+    left: 16,
+    right: 16,
+    zIndex: 9999,
+    elevation: 9999,
   },
 
   toast: {
@@ -246,15 +237,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
 
-    shadowColor: '#000000',
+    shadowColor: '#3d3d3d',
     shadowOffset: {
       width: 0,
       height: 8,
     },
-    shadowOpacity: 0.12,
+    shadowOpacity: 0.5,
     shadowRadius: 18,
 
-    elevation: 10,
+    elevation: 20,
   },
 
   toastText: {
