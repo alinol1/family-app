@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -9,34 +9,153 @@ import {
   Modal,
   TextInput,
   Alert,
+  ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 
 import { fontFamily, fontSize } from '../../utils/fonts';
 import { useLayout } from '../../utils/useLayout';
 
+import {
+  getDocumentById,
+  updateDocument,
+  deleteDocument,
+} from '../../api/documents';
+
+function getDocumentImage(document) {
+  if (document?.file_url) {
+    return { uri: document.file_url };
+  }
+
+  if (document?.file) {
+    return { uri: document.file };
+  }
+
+  return require('../../../assets/images/document-placeholder.png');
+}
+
 export default function DocumentViewScreen({ navigation, route }) {
   const { screenPadding } = useLayout();
 
-  const document = route?.params?.document;
+  const documentId = route?.params?.documentId || route?.params?.document?.id;
+  const initialDocument = route?.params?.document || null;
+  const sourceType = route?.params?.sourceType || null;
 
-  const [title, setTitle] = useState(
-    document?.title || 'Водительское удостоверение'
-  );
+  const [document, setDocument] = useState(initialDocument);
+  const [title, setTitle] = useState(initialDocument?.title || 'Документ');
+  const [draftTitle, setDraftTitle] = useState(initialDocument?.title || '');
+
+  const [isLoading, setIsLoading] = useState(!initialDocument);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   const [editVisible, setEditVisible] = useState(false);
   const [accessVisible, setAccessVisible] = useState(false);
-  const [draftTitle, setDraftTitle] = useState(title);
 
-  const pages = [
-    require('../../../assets/images/document-placeholder.png'),
-    require('../../../assets/images/document-placeholder.png'),
-  ];
+  const isSharedDocument = sourceType === 'shared';
+  const isFamilyDocument = document?.is_family_doc === true;
 
-  const saveTitle = () => {
+  const canEditDocument = !isSharedDocument;
+
+  const loadDocument = async (showLoader = true) => {
+    if (!documentId) {
+      Alert.alert('Ошибка', 'Документ не найден');
+      navigation.goBack();
+      return;
+    }
+
+    try {
+      if (showLoader) {
+        setIsLoading(true);
+      }
+
+      const data = await getDocumentById(documentId);
+
+      setDocument(data);
+      setTitle(data?.title || 'Документ');
+      setDraftTitle(data?.title || '');
+    } catch (error) {
+      console.log(
+        'Ошибка загрузки документа:',
+        error.response?.data || error
+      );
+
+      if (error.response?.status === 403) {
+        Alert.alert(
+          'Нет доступа',
+          'У вас нет прав на просмотр этого документа',
+          [{ text: 'Ок', onPress: () => navigation.goBack() }]
+        );
+        return;
+      }
+
+      if (error.response?.status === 404) {
+        Alert.alert(
+          'Документ не найден',
+          'Возможно, документ был удалён',
+          [{ text: 'Ок', onPress: () => navigation.goBack() }]
+        );
+      }
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    loadDocument(!initialDocument);
+  }, [documentId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadDocument(false);
+    }, [documentId])
+  );
+
+  const onRefresh = () => {
+    setIsRefreshing(true);
+    loadDocument(false);
+  };
+
+  const openEditModal = () => {
+    if (!canEditDocument) {
+      Alert.alert(
+        'Недоступно',
+        'Вы можете только просматривать документ, который вам предоставили'
+      );
+      return;
+    }
+
+    setDraftTitle(title);
+    setEditVisible(true);
+  };
+
+  const openAccessModal = () => {
+    if (!canEditDocument) {
+      Alert.alert(
+        'Недоступно',
+        'Вы не можете изменять доступ к чужому документу'
+      );
+      return;
+    }
+
+    if (isFamilyDocument) {
+      Alert.alert(
+        'Общий документ',
+        'Этот документ уже доступен всей семье'
+      );
+      return;
+    }
+
+    setAccessVisible(true);
+  };
+
+  const saveTitle = async () => {
     const trimmedTitle = draftTitle.trim();
 
     if (!trimmedTitle) {
@@ -44,16 +163,123 @@ export default function DocumentViewScreen({ navigation, route }) {
       return;
     }
 
-    setTitle(trimmedTitle);
-    setEditVisible(false);
+    try {
+      setIsSaving(true);
+
+      const updatedDocument = await updateDocument(documentId, {
+        title: trimmedTitle,
+      });
+
+      setDocument(updatedDocument);
+      setTitle(updatedDocument.title);
+      setDraftTitle(updatedDocument.title);
+      setEditVisible(false);
+    } catch (error) {
+      console.log(
+        'Ошибка обновления документа:',
+        error.response?.data || error
+      );
+
+      Alert.alert(
+        'Ошибка',
+        error.response?.data?.error || 'Не удалось обновить документ'
+      );
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const addPage = () => {
     Alert.alert(
-      'Добавить страницу',
+      'Добавить страницы',
       'Позже здесь будет выбор фото, камеры или файла'
     );
   };
+
+  const confirmDeleteDocument = () => {
+    Alert.alert(
+      'Удалить документ?',
+      'Документ будет удалён без возможности восстановления',
+      [
+        {
+          text: 'Отмена',
+          style: 'cancel',
+        },
+        {
+          text: 'Удалить',
+          style: 'destructive',
+          onPress: handleDeleteDocument,
+        },
+      ]
+    );
+  };
+
+  const handleDeleteDocument = async () => {
+    try {
+      await deleteDocument(documentId);
+
+      Alert.alert(
+        'Готово',
+        'Документ удалён',
+        [
+          {
+            text: 'Ок',
+            onPress: () => navigation.goBack(),
+          },
+        ]
+      );
+    } catch (error) {
+      console.log(
+        'Ошибка удаления документа:',
+        error.response?.data || error
+      );
+
+      Alert.alert(
+        'Ошибка',
+        error.response?.data?.error || 'Не удалось удалить документ'
+      );
+    }
+  };
+
+  const makeSharedStub = () => {
+    Alert.alert(
+      'Настройки доступа',
+      'Следующим этапом подключим выбор родственников и отправку shared_with на backend'
+    );
+  };
+
+  if (isLoading) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={['top']}>
+        <StatusBar style="dark" />
+
+        <View style={[styles.container, { paddingHorizontal: screenPadding }]}>
+          <View style={styles.header}>
+            <TouchableOpacity
+              onPress={() => navigation.goBack()}
+              activeOpacity={0.7}
+              style={styles.backButton}
+            >
+              <Ionicons name="arrow-back" size={24} color="#858585" />
+            </TouchableOpacity>
+
+            <View style={styles.headerActions}>
+              <View style={styles.iconButtonPlaceholder} />
+              <View style={styles.iconButtonPlaceholder} />
+            </View>
+          </View>
+
+          <View style={styles.loaderContainer}>
+            <ActivityIndicator size="large" color="#9456FE" />
+
+            <Text style={styles.loaderText} allowFontScaling={false}>
+              Загружаем документ...
+            </Text>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -70,24 +296,25 @@ export default function DocumentViewScreen({ navigation, route }) {
           </TouchableOpacity>
 
           <View style={styles.headerActions}>
-            <TouchableOpacity
-              style={styles.iconButton}
-              activeOpacity={0.8}
-              onPress={() => {
-                setDraftTitle(title);
-                setEditVisible(true);
-              }}
-            >
-              <Ionicons name="pencil" size={24} color="#5F5F5F" />
-            </TouchableOpacity>
+            {canEditDocument && (
+              <TouchableOpacity
+                style={styles.iconButton}
+                activeOpacity={0.8}
+                onPress={openEditModal}
+              >
+                <Ionicons name="pencil" size={24} color="#5F5F5F" />
+              </TouchableOpacity>
+            )}
 
-            <TouchableOpacity
-              style={styles.iconButton}
-              activeOpacity={0.8}
-              onPress={() => setAccessVisible(true)}
-            >
-              <Ionicons name="settings-outline" size={26} color="#5F5F5F" />
-            </TouchableOpacity>
+            {canEditDocument && !isFamilyDocument && (
+              <TouchableOpacity
+                style={styles.iconButton}
+                activeOpacity={0.8}
+                onPress={openAccessModal}
+              >
+                <Ionicons name="settings-outline" size={26} color="#5F5F5F" />
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
@@ -95,28 +322,45 @@ export default function DocumentViewScreen({ navigation, route }) {
           {title}
         </Text>
 
+        {isFamilyDocument && (
+          <View style={styles.infoPill}>
+            <Ionicons name="people-outline" size={18} color="#9456FE" />
+
+            <Text style={styles.infoPillText} allowFontScaling={false}>
+              Доступен всей семье
+            </Text>
+          </View>
+        )}
+
+        {isSharedDocument && (
+          <View style={styles.infoPill}>
+            <Ionicons name="eye-outline" size={18} color="#9456FE" />
+
+            <Text style={styles.infoPillText} allowFontScaling={false}>
+              Документ предоставлен вам для просмотра
+            </Text>
+          </View>
+        )}
+
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
-        >
-          {pages.map((page, index) => (
-            <Image
-              key={index}
-              source={page}
-              style={styles.documentImage}
-              resizeMode="cover"
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={onRefresh}
+              tintColor="#9456FE"
+              colors={['#9456FE']}
             />
-          ))}
-        </ScrollView>
-
-        <TouchableOpacity
-          style={styles.addButton}
-          activeOpacity={0.85}
-          onPress={addPage}
+          }
         >
-          <Ionicons name="add" size={36} color="#FFFFFF" />
-        </TouchableOpacity>
+          <Image
+            source={getDocumentImage(document)}
+            style={styles.documentImage}
+            resizeMode="cover"
+          />
+        </ScrollView>
 
         <Modal
           visible={editVisible}
@@ -144,12 +388,46 @@ export default function DocumentViewScreen({ navigation, route }) {
               />
 
               <TouchableOpacity
-                style={styles.primaryButton}
+                style={styles.actionButton}
+                activeOpacity={0.82}
+                onPress={addPage}
+              >
+                <Ionicons name="images-outline" size={22} color="#9456FE" />
+
+                <Text style={styles.actionButtonText} allowFontScaling={false}>
+                  Добавить страницы документа
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.actionButton}
+                activeOpacity={0.82}
+                onPress={confirmDeleteDocument}
+              >
+                <Ionicons name="trash-outline" size={22} color="#FA4B4B" />
+
+                <Text
+                  style={[
+                    styles.actionButtonText,
+                    styles.deleteActionButtonText,
+                  ]}
+                  allowFontScaling={false}
+                >
+                  Удалить документ
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.primaryButton,
+                  isSaving && styles.disabledButton,
+                ]}
                 activeOpacity={0.85}
                 onPress={saveTitle}
+                disabled={isSaving}
               >
                 <Text style={styles.primaryButtonText} allowFontScaling={false}>
-                  Сохранить
+                  {isSaving ? 'Сохраняем...' : 'Сохранить'}
                 </Text>
               </TouchableOpacity>
 
@@ -157,6 +435,7 @@ export default function DocumentViewScreen({ navigation, route }) {
                 style={styles.cancelModalButton}
                 activeOpacity={0.75}
                 onPress={() => setEditVisible(false)}
+                disabled={isSaving}
               >
                 <Text style={styles.cancelModalText} allowFontScaling={false}>
                   Отмена
@@ -179,25 +458,33 @@ export default function DocumentViewScreen({ navigation, route }) {
               </Text>
 
               <Text style={styles.accessText} allowFontScaling={false}>
-                Позже здесь можно будет выбрать родственников, которым разрешён
-                просмотр этого документа.
+                Здесь будет выбор членов семьи, которым можно открыть просмотр
+                этого личного документа.
               </Text>
 
-              <View style={styles.accessItem}>
-                <Ionicons name="eye-outline" size={24} color="#9456FE" />
-
-                <Text style={styles.accessItemText} allowFontScaling={false}>
-                  Только просмотр
-                </Text>
-              </View>
-
-              <View style={styles.accessItem}>
+              <TouchableOpacity
+                style={styles.accessItem}
+                activeOpacity={0.82}
+                onPress={makeSharedStub}
+              >
                 <Ionicons name="people-outline" size={24} color="#9456FE" />
 
                 <Text style={styles.accessItemText} allowFontScaling={false}>
-                  Выбор членов семьи
+                  Выбрать родственников
                 </Text>
-              </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.accessItem}
+                activeOpacity={0.82}
+                onPress={makeSharedStub}
+              >
+                <Ionicons name="lock-closed-outline" size={24} color="#9456FE" />
+
+                <Text style={styles.accessItemText} allowFontScaling={false}>
+                  Сделать доступным только мне
+                </Text>
+              </TouchableOpacity>
 
               <TouchableOpacity
                 style={styles.primaryButton}
@@ -245,6 +532,8 @@ const styles = StyleSheet.create({
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
+    minWidth: 108,
+    justifyContent: 'flex-end',
   },
 
   iconButton: {
@@ -257,13 +546,37 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
 
+  iconButtonPlaceholder: {
+    width: 50,
+    height: 50,
+    marginLeft: 8,
+  },
+
   title: {
     marginTop: 4,
-    marginBottom: 18,
+    marginBottom: 12,
     fontFamily: fontFamily.regular,
     fontSize: fontSize.titleM,
     lineHeight: 30,
     color: '#262626',
+  },
+
+  infoPill: {
+    alignSelf: 'flex-start',
+    minHeight: 34,
+    borderRadius: 17,
+    backgroundColor: '#F3ECFF',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    marginBottom: 14,
+  },
+
+  infoPillText: {
+    marginLeft: 6,
+    fontFamily: fontFamily.regular,
+    fontSize: fontSize.caption,
+    color: '#9456FE',
   },
 
   scroll: {
@@ -281,25 +594,17 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
 
-  addButton: {
-    position: 'absolute',
-    right: 0,
-    bottom: 96,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#9456FE',
+  loaderContainer: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
 
-    shadowColor: '#9456FE',
-    shadowOffset: {
-      width: 0,
-      height: 8,
-    },
-    shadowOpacity: 0.22,
-    shadowRadius: 16,
-    elevation: 8,
+  loaderText: {
+    marginTop: 14,
+    fontFamily: fontFamily.regular,
+    fontSize: fontSize.bodyM,
+    color: '#A4A4A4',
   },
 
   modalOverlay: {
@@ -341,6 +646,29 @@ const styles = StyleSheet.create({
     fontFamily: fontFamily.regular,
     fontSize: fontSize.bodyM,
     color: '#262626',
+    marginBottom: 14,
+  },
+
+  actionButton: {
+    width: '100%',
+    height: 56,
+    borderRadius: 18,
+    backgroundColor: '#F7F7F7',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    marginBottom: 10,
+  },
+
+  actionButtonText: {
+    marginLeft: 12,
+    fontFamily: fontFamily.regular,
+    fontSize: fontSize.bodyM,
+    color: '#434343',
+  },
+
+  deleteActionButtonText: {
+    color: '#FA4B4B',
   },
 
   primaryButton: {
@@ -350,7 +678,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#9456FE',
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 18,
+    marginTop: 8,
+  },
+
+  disabledButton: {
+    opacity: 0.6,
   },
 
   primaryButtonText: {

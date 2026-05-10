@@ -84,6 +84,7 @@ export default function AppNavigator() {
         <Stack.Screen name="FamilyTree" component={FamilyTreeScreen} />
 
         <Stack.Screen name="DocumentList" component={DocumentListScreen} />
+        <Stack.Screen name="DocumentView" component={DocumentViewScreen} />
       </Stack.Navigator>
     </View>
   );

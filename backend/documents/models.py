@@ -9,7 +9,6 @@ class Document(models.Model):
     Семейный архив важных документов с гибким доступом.
     """
 
-    # Типы документов
     CATEGORY_CHOICES = [
         ('personal', 'Личные'),
         ('medical', 'Медицина'),
@@ -19,20 +18,17 @@ class Document(models.Model):
         ('other', 'Другое'),
     ]
 
-    # Уровень доступа
     ACCESS_CHOICES = [
         ('owner', 'Только я'),
         ('family', 'Всей семье'),
         ('selected', 'Выбранным участникам'),
     ]
 
-    # Название документа
     title = models.CharField(
         max_length=100,
         verbose_name='Название'
     )
 
-    # Тип документа
     doc_type = models.CharField(
         max_length=10,
         choices=CATEGORY_CHOICES,
@@ -40,13 +36,11 @@ class Document(models.Model):
         verbose_name='Тип документа'
     )
 
-    # Файл (фото/скан)
     file = models.FileField(
         upload_to='documents/',
         verbose_name='Файл'
     )
 
-    # Кто загрузил документ
     uploaded_by = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
@@ -54,7 +48,6 @@ class Document(models.Model):
         verbose_name='Загрузил'
     )
 
-    # Владелец документа (чей это документ)
     owner = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
@@ -64,7 +57,6 @@ class Document(models.Model):
         verbose_name='Владелец'
     )
 
-    # Семья
     family = models.ForeignKey(
         Family,
         on_delete=models.CASCADE,
@@ -72,7 +64,6 @@ class Document(models.Model):
         verbose_name='Семья'
     )
 
-    # Уровень доступа
     access = models.CharField(
         max_length=10,
         choices=ACCESS_CHOICES,
@@ -80,7 +71,6 @@ class Document(models.Model):
         verbose_name='Доступ'
     )
 
-    # Кому именно открыт доступ (только при access='selected')
     shared_with = models.ManyToManyField(
         User,
         blank=True,
@@ -88,13 +78,11 @@ class Document(models.Model):
         verbose_name='Доступ открыт для'
     )
 
-    # Это общий семейный документ?
     is_family_doc = models.BooleanField(
         default=False,
         verbose_name='Общий документ семьи'
     )
 
-    # Дата загрузки
     created_at = models.DateTimeField(
         auto_now_add=True,
         verbose_name='Дата загрузки'
@@ -110,24 +98,67 @@ class Document(models.Model):
 
     def user_has_access(self, user):
         """
-        Проверяет, имеет ли конкретный пользователь
-        доступ к этому документу.
+        Проверяет, имеет ли пользователь доступ к документу.
         """
-        # Владелец всегда имеет доступ
-        if self.owner == user or self.uploaded_by == user:
+
+        if not user or not user.is_authenticated:
+            return False
+
+        if not hasattr(user, 'family_membership'):
+            return False
+
+        # Нельзя смотреть документы чужой семьи
+        if user.family_membership.family_id != self.family_id:
+            return False
+
+        # Владелец и загрузивший всегда имеют доступ
+        if self.owner_id == user.id or self.uploaded_by_id == user.id:
             return True
 
-        # Общий семейный документ — доступен всем
+        # Общий семейный документ доступен всем членам семьи
         if self.is_family_doc:
             return True
 
-        # Доступ для всей семьи
+        # Документ доступен всей семье
         if self.access == 'family':
             return True
 
-        # Доступ для выбранных участников
+        # Документ доступен выбранным участникам
         if self.access == 'selected':
-            return user in self.shared_with.all()
+            return self.shared_with.filter(id=user.id).exists()
 
-        # По умолчанию — нет доступа
         return False
+
+    def user_can_edit(self, user):
+        """
+        Проверяет, может ли пользователь редактировать документ.
+        """
+
+        if not user or not user.is_authenticated:
+            return False
+
+        if not hasattr(user, 'family_membership'):
+            return False
+
+        if user.family_membership.family_id != self.family_id:
+            return False
+
+        # Владелец или загрузивший может редактировать
+        if self.owner_id == user.id or self.uploaded_by_id == user.id:
+            return True
+
+        return False
+
+    def user_can_manage_access(self, user):
+        """
+        Проверяет, может ли пользователь менять доступ.
+        Доступ можно менять только у личных документов.
+        """
+
+        if not self.user_can_edit(user):
+            return False
+
+        if self.is_family_doc:
+            return False
+
+        return True
