@@ -406,3 +406,39 @@ class DocumentDetailView(APIView):
             {'message': 'Документ удалён'},
             status=status.HTTP_200_OK
         )
+    
+
+class DocumentFamilyMembersView(APIView):
+    """
+    Члены семьи для настройки доступа к документу.
+    GET /api/documents/family-members/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        family = get_user_family(request.user)
+
+        if not family:
+            return Response(
+                {'error': 'Вы не состоите в семье'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        users = User.objects.filter(
+            family_membership__family=family
+        ).exclude(
+            id=request.user.id
+        )
+
+        data = []
+
+        for user in users:
+            name = f'{user.first_name} {user.last_name}'.strip() or user.username
+
+            data.append({
+                'id': user.id,
+                'name': name,
+                'role': user.role,
+            })
+
+        return Response(data)

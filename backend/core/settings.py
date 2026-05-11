@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     'photos',
     'familytree',
     'sos',
+    'storages',
 ]
 
 MIDDLEWARE = [
@@ -149,7 +150,55 @@ MEDIA_URL = '/media/'                    # ДОБАВЛЕНО
 MEDIA_ROOT = BASE_DIR / 'media'          # ДОБАВЛЕНО
 
 
+# ==========================================
+# Yandex Object Storage (S3)
+# ==========================================
 
+YANDEX_STORAGE_ACCESS_KEY_ID = config(
+    'YANDEX_STORAGE_ACCESS_KEY_ID',
+    default=''
+)
+
+YANDEX_STORAGE_SECRET_ACCESS_KEY = config(
+    'YANDEX_STORAGE_SECRET_ACCESS_KEY',
+    default=''
+)
+
+YANDEX_STORAGE_BUCKET_NAME = config(
+    'YANDEX_STORAGE_BUCKET_NAME',
+    default=''
+)
+
+YANDEX_STORAGE_ENDPOINT_URL = config(
+    'YANDEX_STORAGE_ENDPOINT_URL',
+    default='https://storage.yandexcloud.net'
+)
+
+AWS_ACCESS_KEY_ID = YANDEX_STORAGE_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY = YANDEX_STORAGE_SECRET_ACCESS_KEY
+
+AWS_STORAGE_BUCKET_NAME = YANDEX_STORAGE_BUCKET_NAME
+AWS_S3_ENDPOINT_URL = YANDEX_STORAGE_ENDPOINT_URL
+
+AWS_S3_REGION_NAME = 'ru-central1'
+
+AWS_DEFAULT_ACL = None
+
+AWS_QUERYSTRING_AUTH = True
+
+AWS_S3_FILE_OVERWRITE = False
+
+AWS_S3_SIGNATURE_VERSION = 's3v4'
+
+STORAGES = {
+    'default': {
+        'BACKEND': 'storages.backends.s3.S3Storage',
+    },
+
+    'staticfiles': {
+        'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
+    },
+}
 
 # ДОБАВЛЕНО ПОСЛЕ______________________________________________________________________________________________________________________________________________________________________________________
 # CORS Settings (для React Native)

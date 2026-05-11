@@ -25,6 +25,7 @@ import {
   getDocumentById,
   updateDocument,
   deleteDocument,
+  getDocumentFamilyMembers,
 } from '../../api/documents';
 
 function getDocumentImage(document) {
@@ -50,16 +51,19 @@ export default function DocumentViewScreen({ navigation, route }) {
   const [title, setTitle] = useState(initialDocument?.title || 'Документ');
   const [draftTitle, setDraftTitle] = useState(initialDocument?.title || '');
 
+  const [familyMembers, setFamilyMembers] = useState([]);
+  const [selectedMembers, setSelectedMembers] = useState([]);
+
   const [isLoading, setIsLoading] = useState(!initialDocument);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isAccessSaving, setIsAccessSaving] = useState(false);
 
   const [editVisible, setEditVisible] = useState(false);
   const [accessVisible, setAccessVisible] = useState(false);
 
   const isSharedDocument = sourceType === 'shared';
   const isFamilyDocument = document?.is_family_doc === true;
-
   const canEditDocument = !isSharedDocument;
 
   const loadDocument = async (showLoader = true) => {
@@ -79,11 +83,11 @@ export default function DocumentViewScreen({ navigation, route }) {
       setDocument(data);
       setTitle(data?.title || 'Документ');
       setDraftTitle(data?.title || '');
+
+      const ids = (data?.shared_with || []).map((id) => Number(id));
+      setSelectedMembers(ids);
     } catch (error) {
-      console.log(
-        'Ошибка загрузки документа:',
-        error.response?.data || error
-      );
+      console.log('Ошибка загрузки документа:', error.response?.data || error);
 
       if (error.response?.status === 403) {
         Alert.alert(
@@ -104,6 +108,18 @@ export default function DocumentViewScreen({ navigation, route }) {
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
+    }
+  };
+
+  const loadFamilyMembers = async () => {
+    try {
+      const data = await getDocumentFamilyMembers();
+      setFamilyMembers(data || []);
+    } catch (error) {
+      console.log(
+        'Ошибка загрузки членов семьи:',
+        error.response?.data || error
+      );
     }
   };
 
@@ -135,24 +151,29 @@ export default function DocumentViewScreen({ navigation, route }) {
     setEditVisible(true);
   };
 
-  const openAccessModal = () => {
+  const openAccessModal = async () => {
     if (!canEditDocument) {
-      Alert.alert(
-        'Недоступно',
-        'Вы не можете изменять доступ к чужому документу'
-      );
+      Alert.alert('Недоступно', 'Вы не можете изменять доступ к чужому документу');
       return;
     }
 
     if (isFamilyDocument) {
-      Alert.alert(
-        'Общий документ',
-        'Этот документ уже доступен всей семье'
-      );
+      Alert.alert('Общий документ', 'Этот документ уже доступен всей семье');
       return;
     }
 
+    await loadFamilyMembers();
     setAccessVisible(true);
+  };
+
+  const toggleMember = (memberId) => {
+    setSelectedMembers((prev) => {
+      if (prev.includes(memberId)) {
+        return prev.filter((id) => id !== memberId);
+      }
+
+      return [...prev, memberId];
+    });
   };
 
   const saveTitle = async () => {
@@ -175,10 +196,7 @@ export default function DocumentViewScreen({ navigation, route }) {
       setDraftTitle(updatedDocument.title);
       setEditVisible(false);
     } catch (error) {
-      console.log(
-        'Ошибка обновления документа:',
-        error.response?.data || error
-      );
+      console.log('Ошибка обновления документа:', error.response?.data || error);
 
       Alert.alert(
         'Ошибка',
@@ -186,6 +204,34 @@ export default function DocumentViewScreen({ navigation, route }) {
       );
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const saveAccess = async () => {
+    try {
+      setIsAccessSaving(true);
+
+      const updatedDocument = await updateDocument(documentId, {
+        shared_with: selectedMembers,
+      });
+
+      setDocument(updatedDocument);
+      setAccessVisible(false);
+
+      if (selectedMembers.length === 0) {
+        Alert.alert('Готово', 'Документ снова доступен только вам');
+      } else {
+        Alert.alert('Готово', 'Доступ к документу обновлён');
+      }
+    } catch (error) {
+      console.log('Ошибка обновления доступа:', error.response?.data || error);
+
+      Alert.alert(
+        'Ошибка',
+        error.response?.data?.error || 'Не удалось обновить доступ'
+      );
+    } finally {
+      setIsAccessSaving(false);
     }
   };
 
@@ -218,34 +264,20 @@ export default function DocumentViewScreen({ navigation, route }) {
     try {
       await deleteDocument(documentId);
 
-      Alert.alert(
-        'Готово',
-        'Документ удалён',
-        [
-          {
-            text: 'Ок',
-            onPress: () => navigation.goBack(),
-          },
-        ]
-      );
+      Alert.alert('Готово', 'Документ удалён', [
+        {
+          text: 'Ок',
+          onPress: () => navigation.goBack(),
+        },
+      ]);
     } catch (error) {
-      console.log(
-        'Ошибка удаления документа:',
-        error.response?.data || error
-      );
+      console.log('Ошибка удаления документа:', error.response?.data || error);
 
       Alert.alert(
         'Ошибка',
         error.response?.data?.error || 'Не удалось удалить документ'
       );
     }
-  };
-
-  const makeSharedStub = () => {
-    Alert.alert(
-      'Настройки доступа',
-      'Следующим этапом подключим выбор родственников и отправку shared_with на backend'
-    );
   };
 
   if (isLoading) {
@@ -458,41 +490,74 @@ export default function DocumentViewScreen({ navigation, route }) {
               </Text>
 
               <Text style={styles.accessText} allowFontScaling={false}>
-                Здесь будет выбор членов семьи, которым можно открыть просмотр
-                этого личного документа.
+                Выберите родственников, которым будет доступен этот документ.
               </Text>
 
+              {familyMembers.length === 0 ? (
+                <View style={styles.emptyMembersBlock}>
+                  <Ionicons name="people-outline" size={34} color="#C8C8C8" />
+
+                  <Text style={styles.emptyMembersText} allowFontScaling={false}>
+                    В семье пока нет других участников
+                  </Text>
+                </View>
+              ) : (
+                familyMembers.map((member) => {
+                  const isSelected = selectedMembers.includes(member.id);
+
+                  return (
+                    <TouchableOpacity
+                      key={member.id}
+                      style={styles.memberItem}
+                      activeOpacity={0.82}
+                      onPress={() => toggleMember(member.id)}
+                    >
+                      <View style={styles.memberAvatar}>
+                        <Ionicons name="person" size={20} color="#A4A4A4" />
+                      </View>
+
+                      <View style={styles.memberInfo}>
+                        <Text style={styles.memberName} allowFontScaling={false}>
+                          {member.name}
+                        </Text>
+
+                        <Text style={styles.memberRole} allowFontScaling={false}>
+                          {member.role || 'Участник семьи'}
+                        </Text>
+                      </View>
+
+                      <Ionicons
+                        name={isSelected ? 'checkmark-circle' : 'ellipse-outline'}
+                        size={26}
+                        color={isSelected ? '#9456FE' : '#C8C8C8'}
+                      />
+                    </TouchableOpacity>
+                  );
+                })
+              )}
+
               <TouchableOpacity
-                style={styles.accessItem}
-                activeOpacity={0.82}
-                onPress={makeSharedStub}
-              >
-                <Ionicons name="people-outline" size={24} color="#9456FE" />
-
-                <Text style={styles.accessItemText} allowFontScaling={false}>
-                  Выбрать родственников
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.accessItem}
-                activeOpacity={0.82}
-                onPress={makeSharedStub}
-              >
-                <Ionicons name="lock-closed-outline" size={24} color="#9456FE" />
-
-                <Text style={styles.accessItemText} allowFontScaling={false}>
-                  Сделать доступным только мне
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.primaryButton}
+                style={[
+                  styles.primaryButton,
+                  isAccessSaving && styles.disabledButton,
+                ]}
                 activeOpacity={0.85}
-                onPress={() => setAccessVisible(false)}
+                onPress={saveAccess}
+                disabled={isAccessSaving}
               >
                 <Text style={styles.primaryButtonText} allowFontScaling={false}>
-                  Готово
+                  {isAccessSaving ? 'Сохраняем...' : 'Сохранить доступ'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.cancelModalButton}
+                activeOpacity={0.75}
+                onPress={() => setAccessVisible(false)}
+                disabled={isAccessSaving}
+              >
+                <Text style={styles.cancelModalText} allowFontScaling={false}>
+                  Отмена
                 </Text>
               </TouchableOpacity>
             </View>
@@ -713,20 +778,56 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
 
-  accessItem: {
-    height: 52,
-    borderRadius: 16,
+  memberItem: {
+    width: '100%',
+    minHeight: 58,
+    borderRadius: 18,
     backgroundColor: '#F7F7F7',
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     marginBottom: 10,
   },
 
-  accessItemText: {
+  memberAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  memberInfo: {
+    flex: 1,
     marginLeft: 12,
+  },
+
+  memberName: {
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.bodyM,
+    color: '#262626',
+  },
+
+  memberRole: {
+    marginTop: 2,
+    fontFamily: fontFamily.regular,
+    fontSize: fontSize.caption,
+    color: '#858585',
+  },
+
+  emptyMembersBlock: {
+    borderRadius: 18,
+    backgroundColor: '#F7F7F7',
+    paddingVertical: 20,
+    alignItems: 'center',
+  },
+
+  emptyMembersText: {
+    marginTop: 8,
     fontFamily: fontFamily.regular,
     fontSize: fontSize.bodyM,
-    color: '#434343',
+    color: '#858585',
+    textAlign: 'center',
   },
 });

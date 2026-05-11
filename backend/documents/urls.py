@@ -6,24 +6,17 @@ from .views import (
     SharedOwnersView,
     UploadDocumentView,
     DocumentDetailView,
+    DocumentFamilyMembersView,
 )
 
 urlpatterns = [
-    # Общие документы семьи
     path('family/', FamilyDocumentsView.as_view(), name='family_docs'),
-
-    # Мои личные документы
     path('my/', MyDocumentsView.as_view(), name='my_docs'),
-
-    # Документы, доступные мне
     path('shared/', SharedWithMeView.as_view(), name='shared_docs'),
-
-    # Люди, которые предоставили мне доступ
     path('shared-owners/', SharedOwnersView.as_view(), name='shared_owners'),
 
-    # Загрузить документ
-    path('upload/', UploadDocumentView.as_view(), name='upload_doc'),
+    path('family-members/', DocumentFamilyMembersView.as_view(), name='document_family_members'),
 
-    # Просмотр, редактирование, удаление
+    path('upload/', UploadDocumentView.as_view(), name='upload_doc'),
     path('<int:document_id>/', DocumentDetailView.as_view(), name='doc_detail'),
 ]

@@ -1,6 +1,5 @@
 import client from './client';
 
-// Общие документы семьи
 export const getFamilyDocuments = async (search = '') => {
   const response = await client.get('/documents/family/', {
     params: { search },
@@ -9,7 +8,6 @@ export const getFamilyDocuments = async (search = '') => {
   return response.data;
 };
 
-// Личные документы текущего пользователя
 export const getMyDocuments = async (search = '') => {
   const response = await client.get('/documents/my/', {
     params: { search },
@@ -18,7 +16,6 @@ export const getMyDocuments = async (search = '') => {
   return response.data;
 };
 
-// Документы, доступные мне
 export const getSharedDocuments = async (ownerId = null, search = '') => {
   const response = await client.get('/documents/shared/', {
     params: {
@@ -30,19 +27,21 @@ export const getSharedDocuments = async (ownerId = null, search = '') => {
   return response.data;
 };
 
-// Люди, которые предоставили мне доступ
 export const getSharedOwners = async () => {
   const response = await client.get('/documents/shared-owners/');
   return response.data;
 };
 
-// Один документ
+export const getDocumentFamilyMembers = async () => {
+  const response = await client.get('/documents/family-members/');
+  return response.data;
+};
+
 export const getDocumentById = async (documentId) => {
   const response = await client.get(`/documents/${documentId}/`);
   return response.data;
 };
 
-// Загрузка документа
 export const uploadDocument = async ({
   title,
   file,
@@ -65,13 +64,11 @@ export const uploadDocument = async ({
   return response.data;
 };
 
-// Обновить документ
 export const updateDocument = async (documentId, data) => {
   const response = await client.patch(`/documents/${documentId}/`, data);
   return response.data;
 };
 
-// Удалить документ
 export const deleteDocument = async (documentId) => {
   const response = await client.delete(`/documents/${documentId}/`);
   return response.data;

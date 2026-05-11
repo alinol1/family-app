@@ -13,6 +13,9 @@ import {
   Alert,
 } from 'react-native';
 
+import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
+
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
@@ -25,6 +28,7 @@ import {
   getFamilyDocuments,
   getMyDocuments,
   getSharedDocuments,
+  uploadDocument,
 } from '../../api/documents';
 
 function getDocumentImage(document) {
@@ -32,7 +36,37 @@ function getDocumentImage(document) {
     return { uri: document.file_url };
   }
 
+  if (document?.file) {
+    return { uri: document.file };
+  }
+
   return require('../../../assets/images/document-placeholder.png');
+}
+
+function getFileExtension(fileName = '') {
+  const parts = fileName.split('.');
+  return parts.length > 1 ? parts.pop().toLowerCase() : '';
+}
+
+function isImageFile(fileName = '', mimeType = '') {
+  const ext = getFileExtension(fileName);
+
+  return (
+    mimeType.startsWith('image/') ||
+    ['jpg', 'jpeg', 'png', 'webp'].includes(ext)
+  );
+}
+
+function getCleanTitle(fileName = '') {
+  if (!fileName) {
+    return 'Документ';
+  }
+
+  if (!fileName.includes('.')) {
+    return fileName;
+  }
+
+  return fileName.substring(0, fileName.lastIndexOf('.')) || 'Документ';
 }
 
 export default function DocumentListScreen({ navigation, route }) {
@@ -47,6 +81,7 @@ export default function DocumentListScreen({ navigation, route }) {
 
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const [addMenuVisible, setAddMenuVisible] = useState(false);
 
   const isSharedScreen = type === 'shared';
@@ -123,31 +158,155 @@ export default function DocumentListScreen({ navigation, route }) {
     setAddMenuVisible(true);
   };
 
-  const handleAddDocument = (method) => {
-    setAddMenuVisible(false);
+  const uploadSelectedFile = async (selectedFile) => {
+    if (!selectedFile) {
+      return;
+    }
 
-    Alert.alert(
-      'Добавление документа',
-      method === 'camera'
-        ? 'Позже здесь откроется камера'
-        : method === 'gallery'
-          ? 'Позже здесь откроется галерея'
-          : 'Позже здесь откроется выбор файла'
-    );
+    try {
+      setIsUploading(true);
+
+      const documentTitle = getCleanTitle(selectedFile.name);
+
+      await uploadDocument({
+        title: documentTitle,
+        file: selectedFile,
+        docType: type === 'family' ? 'family' : 'personal',
+        isFamilyDoc: type === 'family',
+      });
+
+      Alert.alert('Успешно', 'Документ загружен');
+
+      await loadDocuments(search, false);
+    } catch (error) {
+      console.log(
+        'Ошибка загрузки документа:',
+        error.response?.data || error
+      );
+
+      Alert.alert(
+        'Ошибка',
+        error.response?.data?.error || 'Не удалось загрузить документ'
+      );
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleAddDocument = async (method) => {
+    try {
+      setAddMenuVisible(false);
+
+      let selectedFile = null;
+
+      if (method === 'camera') {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+
+        if (!permission.granted) {
+          Alert.alert('Нет доступа', 'Разрешите доступ к камере');
+          return;
+        }
+
+        const result = await ImagePicker.launchCameraAsync({
+          mediaTypes: ['images'],
+          quality: 1,
+        });
+
+        if (result.canceled) {
+          return;
+        }
+
+        const asset = result.assets[0];
+
+        selectedFile = {
+          uri: asset.uri,
+          type: asset.mimeType || 'image/jpeg',
+          name: asset.fileName || `photo_${Date.now()}.jpg`,
+        };
+      }
+
+      if (method === 'gallery') {
+        const permission =
+          await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+        if (!permission.granted) {
+          Alert.alert('Нет доступа', 'Разрешите доступ к галерее');
+          return;
+        }
+
+        const result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ['images'],
+          quality: 1,
+        });
+
+        if (result.canceled) {
+          return;
+        }
+
+        const asset = result.assets[0];
+
+        selectedFile = {
+          uri: asset.uri,
+          type: asset.mimeType || 'image/jpeg',
+          name: asset.fileName || `image_${Date.now()}.jpg`,
+        };
+      }
+
+      if (method === 'file') {
+        const result = await DocumentPicker.getDocumentAsync({
+          multiple: false,
+          copyToCacheDirectory: true,
+        });
+
+        if (result.canceled) {
+          return;
+        }
+
+        const asset = result.assets[0];
+
+        selectedFile = {
+          uri: asset.uri,
+          type: asset.mimeType || 'application/octet-stream',
+          name: asset.name || `document_${Date.now()}`,
+        };
+      }
+
+      await uploadSelectedFile(selectedFile);
+    } catch (error) {
+      console.log(
+        'Ошибка выбора документа:',
+        error.response?.data || error
+      );
+
+      Alert.alert('Ошибка', 'Не удалось выбрать документ');
+    }
   };
 
   const renderDocument = ({ item }) => {
+    const fileName = item?.file || item?.file_url || item?.title || '';
+    const isImage = isImageFile(fileName, '');
+
     return (
       <TouchableOpacity
         style={styles.documentCard}
         activeOpacity={0.85}
         onPress={() => openDocument(item)}
       >
-        <Image
-          source={getDocumentImage(item)}
-          style={styles.documentImage}
-          resizeMode="cover"
-        />
+        {isImage ? (
+          <Image
+            source={getDocumentImage(item)}
+            style={styles.documentImage}
+            resizeMode="cover"
+          />
+        ) : (
+          <View style={styles.filePreview}>
+            <Ionicons name="document-text-outline" size={42} color="#9456FE" />
+
+            <Text style={styles.filePreviewText} allowFontScaling={false}>
+              {getFileExtension(fileName).toUpperCase() || 'FILE'}
+            </Text>
+          </View>
+        )}
 
         <Text
           style={styles.documentTitle}
@@ -277,11 +436,16 @@ export default function DocumentListScreen({ navigation, route }) {
 
         {!isSharedScreen && (
           <TouchableOpacity
-            style={styles.addButton}
+            style={[styles.addButton, isUploading && styles.addButtonDisabled]}
             activeOpacity={0.85}
             onPress={openAddMenu}
+            disabled={isUploading}
           >
-            <Ionicons name="add" size={36} color="#FFFFFF" />
+            {isUploading ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Ionicons name="add" size={36} color="#FFFFFF" />
+            )}
           </TouchableOpacity>
         )}
 
@@ -296,7 +460,7 @@ export default function DocumentListScreen({ navigation, route }) {
             activeOpacity={1}
             onPress={() => setAddMenuVisible(false)}
           >
-            <View style={styles.addMenu}>
+            <TouchableOpacity activeOpacity={1} style={styles.addMenu}>
               <Text style={styles.addMenuTitle} allowFontScaling={false}>
                 Добавить документ
               </Text>
@@ -340,7 +504,17 @@ export default function DocumentListScreen({ navigation, route }) {
                   Выбрать файл
                 </Text>
               </TouchableOpacity>
-            </View>
+
+              <TouchableOpacity
+                style={styles.cancelButton}
+                activeOpacity={0.75}
+                onPress={() => setAddMenuVisible(false)}
+              >
+                <Text style={styles.cancelButtonText} allowFontScaling={false}>
+                  Отмена
+                </Text>
+              </TouchableOpacity>
+            </TouchableOpacity>
           </TouchableOpacity>
         </Modal>
       </View>
@@ -418,6 +592,22 @@ const styles = StyleSheet.create({
     backgroundColor: '#E7E7E7',
   },
 
+  filePreview: {
+    width: '100%',
+    height: 110,
+    borderRadius: 10,
+    backgroundColor: '#F3ECFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  filePreviewText: {
+    marginTop: 6,
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.caption,
+    color: '#9456FE',
+  },
+
   documentTitle: {
     marginTop: 7,
     fontFamily: fontFamily.regular,
@@ -485,6 +675,10 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
 
+  addButtonDisabled: {
+    opacity: 0.7,
+  },
+
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.28)',
@@ -530,5 +724,18 @@ const styles = StyleSheet.create({
     fontFamily: fontFamily.regular,
     fontSize: fontSize.bodyM,
     color: '#434343',
+  },
+
+  cancelButton: {
+    height: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+
+  cancelButtonText: {
+    fontFamily: fontFamily.regular,
+    fontSize: fontSize.bodyM,
+    color: '#858585',
   },
 });
