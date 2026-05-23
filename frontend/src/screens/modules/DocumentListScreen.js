@@ -36,10 +36,6 @@ function getDocumentImage(document) {
     return { uri: document.file_url };
   }
 
-  if (document?.file) {
-    return { uri: document.file };
-  }
-
   return require('../../../assets/images/document-placeholder.png');
 }
 
@@ -282,9 +278,10 @@ export default function DocumentListScreen({ navigation, route }) {
     }
   };
 
-  const renderDocument = ({ item }) => {
-    const fileName = item?.file || item?.file_url || item?.title || '';
-    const isImage = isImageFile(fileName, '');
+const renderDocument = ({ item }) => {
+  const fileName = item?.title || '';
+  const fileUrl = item?.file_url || '';
+  const isImage = isImageFile(fileName, '') || isImageFile(fileUrl, '');
 
     return (
       <TouchableOpacity

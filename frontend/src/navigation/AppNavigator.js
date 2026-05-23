@@ -33,6 +33,23 @@ import DocumentListScreen from '../screens/modules/DocumentListScreen';
 
 import DocumentViewScreen from '../screens/modules/DocumentViewScreen';
 
+import PhotoAlbumScreen from '../screens/modules/PhotoAlbumScreen';
+import PhotoViewScreen from '../screens/modules/PhotoViewScreen';
+
+import PersonalInfoScreen from '../screens/profile/PersonalInfoScreen';
+
+import MedicalInfoScreen from '../screens/profile/MedicalInfoScreen';
+
+import FamilyMembersScreen from '../screens/profile/FamilyMembersScreen';
+
+import InviteFamilyScreen from '../screens/profile/InviteFamilyScreen';
+
+import FinanceGoalDetailScreen from '../screens/modules/FinanceGoalDetailScreen';
+
+import FinanceGoalsScreen from '../screens/modules/FinanceGoalsScreen';
+
+
+
 // ВАЖНО: если у тебя файл называется иначе — поменяй путь тут
 import ChatDetailScreen from '../screens/main/ChatDetailScreen';
 
@@ -85,6 +102,21 @@ export default function AppNavigator() {
 
         <Stack.Screen name="DocumentList" component={DocumentListScreen} />
         <Stack.Screen name="DocumentView" component={DocumentViewScreen} />
+
+        <Stack.Screen name="PhotoAlbum" component={PhotoAlbumScreen} />
+        <Stack.Screen name="PhotoView" component={PhotoViewScreen} />
+
+        <Stack.Screen name="PersonalInfo" component={PersonalInfoScreen} />
+
+        <Stack.Screen name="MedicalInfo" component={MedicalInfoScreen} />
+
+        <Stack.Screen name="FamilyMembers" component={FamilyMembersScreen} />
+
+        <Stack.Screen name="InviteFamily" component={InviteFamilyScreen} />
+
+        <Stack.Screen name="FinanceGoalDetail" component={FinanceGoalDetailScreen} />
+
+        <Stack.Screen name="FinanceGoals" component={FinanceGoalsScreen} />
       </Stack.Navigator>
     </View>
   );

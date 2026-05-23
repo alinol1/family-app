@@ -1,22 +1,22 @@
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
+
 from .models import User
 
 
 class RegisterSerializer(serializers.ModelSerializer):
     """
     Сериализатор для регистрации.
-    Принимает данные нового пользователя.
+    Клиент не может передавать role.
+    По умолчанию новый пользователь создаётся с ролью adult.
     """
 
-    # Поле пароля
     password = serializers.CharField(
-        write_only=True,        # пароль не возвращается в ответе
+        write_only=True,
         required=True,
         validators=[validate_password]
     )
 
-    # Подтверждение пароля
     password2 = serializers.CharField(
         write_only=True,
         required=True
@@ -32,34 +32,52 @@ class RegisterSerializer(serializers.ModelSerializer):
             'password',
             'password2',
             'phone',
-            'role',
         ]
+
+    def validate_email(self, value):
+        email = str(value or '').strip().lower()
+
+        if email and User.objects.filter(email__iexact=email).exists():
+            raise serializers.ValidationError(
+                'Пользователь с таким email уже существует'
+            )
+
+        return email
+
+    def validate_username(self, value):
+        username = str(value or '').strip()
+
+        if not username:
+            raise serializers.ValidationError(
+                'Имя пользователя обязательно'
+            )
+
+        return username
 
     def validate(self, attrs):
         """
-        Проверяем что пароли совпадают.
+        Проверяем, что пароли совпадают.
         """
         if attrs['password'] != attrs['password2']:
             raise serializers.ValidationError(
                 {'password': 'Пароли не совпадают'}
             )
+
         return attrs
 
     def create(self, validated_data):
         """
         Создаём нового пользователя.
         """
-        # Удаляем password2 — он нам больше не нужен
         validated_data.pop('password2')
 
-        # Создаём пользователя
         user = User.objects.create_user(
             username=validated_data['username'],
             email=validated_data.get('email', ''),
-            first_name=validated_data.get('first_name', ''),
-            last_name=validated_data.get('last_name', ''),
-            phone=validated_data.get('phone', ''),
-            role=validated_data.get('role', 'adult'),
+            first_name=str(validated_data.get('first_name', '')).strip(),
+            last_name=str(validated_data.get('last_name', '')).strip(),
+            phone=str(validated_data.get('phone', '')).strip(),
+            role='adult',
             password=validated_data['password']
         )
 
@@ -81,21 +99,55 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'first_name',
             'last_name',
             'phone',
+            'city',
             'avatar',
-            'role',
             'blood_type',
             'allergies',
             'medical_notes',
+            'chronic_diseases',
+            'medications',
+            'emergency_contact_name',
+            'emergency_contact_phone',
             'date_joined',
         ]
 
-        # Эти поля нельзя изменить через профиль
         read_only_fields = [
             'id',
             'username',
-            'email',
             'date_joined',
         ]
+
+    def validate_email(self, value):
+        email = str(value or '').strip().lower()
+
+        if not email:
+            return email
+
+        user = self.instance
+
+        qs = User.objects.filter(email__iexact=email)
+
+        if user:
+            qs = qs.exclude(id=user.id)
+
+        if qs.exists():
+            raise serializers.ValidationError(
+                'Пользователь с таким email уже существует'
+            )
+
+        return email
+
+    def validate_first_name(self, value):
+        return str(value or '').strip()
+
+    def validate_last_name(self, value):
+        return str(value or '').strip()
+
+    def validate_phone(self, value):
+        return str(value or '').strip()
+
+    def validate_city(self, value):
+        return str(value or '').strip()
 
 
 class ChangePasswordSerializer(serializers.Serializer):
@@ -103,47 +155,109 @@ class ChangePasswordSerializer(serializers.Serializer):
     Сериализатор для смены пароля.
     """
 
-    old_password = serializers.CharField(required=True)
+    old_password = serializers.CharField(
+        required=True,
+        write_only=True
+    )
+
     new_password = serializers.CharField(
         required=True,
+        write_only=True,
         validators=[validate_password]
     )
-    new_password2 = serializers.CharField(required=True)
+
+    new_password2 = serializers.CharField(
+        required=True,
+        write_only=True
+    )
 
     def validate(self, attrs):
         if attrs['new_password'] != attrs['new_password2']:
             raise serializers.ValidationError(
                 {'new_password': 'Пароли не совпадают'}
             )
+
         return attrs
-    
+
+
 class PasswordResetRequestSerializer(serializers.Serializer):
     """
     Запрос на сброс пароля — принимает email.
     """
+
     email = serializers.EmailField(required=True)
+
+    def validate_email(self, value):
+        return str(value or '').strip().lower()
 
 
 class PasswordResetVerifySerializer(serializers.Serializer):
     """
     Проверка кода сброса.
     """
+
     email = serializers.EmailField(required=True)
-    code = serializers.CharField(max_length=6, required=True)
+    code = serializers.CharField(
+        max_length=6,
+        min_length=6,
+        required=True
+    )
+
+    def validate_email(self, value):
+        return str(value or '').strip().lower()
+
+    def validate_code(self, value):
+        code = str(value or '').strip()
+
+        if not code.isdigit():
+            raise serializers.ValidationError(
+                'Код должен состоять из 6 цифр'
+            )
+
+        return code
 
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
     """
     Установка нового пароля.
     """
+
     email = serializers.EmailField(required=True)
-    code = serializers.CharField(max_length=6, required=True)
-    new_password = serializers.CharField(required=True)
-    new_password2 = serializers.CharField(required=True)
+
+    code = serializers.CharField(
+        max_length=6,
+        min_length=6,
+        required=True
+    )
+
+    new_password = serializers.CharField(
+        required=True,
+        write_only=True,
+        validators=[validate_password]
+    )
+
+    new_password2 = serializers.CharField(
+        required=True,
+        write_only=True
+    )
+
+    def validate_email(self, value):
+        return str(value or '').strip().lower()
+
+    def validate_code(self, value):
+        code = str(value or '').strip()
+
+        if not code.isdigit():
+            raise serializers.ValidationError(
+                'Код должен состоять из 6 цифр'
+            )
+
+        return code
 
     def validate(self, attrs):
         if attrs['new_password'] != attrs['new_password2']:
             raise serializers.ValidationError(
                 {'new_password': 'Пароли не совпадают'}
             )
+
         return attrs

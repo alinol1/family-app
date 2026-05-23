@@ -4,12 +4,22 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser
 
+from django.core.exceptions import ValidationError as DjangoValidationError
+
+from core.validators import validate_document_file
 from users.models import User
+
 from .models import Document
 from .serializers import (
     DocumentSerializer,
     DocumentUpdateSerializer,
 )
+
+
+PERSONAL_DOCUMENT_ACCESS_VALUES = {
+    'owner',
+    'selected',
+}
 
 
 def get_user_family(user):
@@ -226,8 +236,14 @@ class UploadDocumentView(APIView):
 
         title = request.data.get('title', '').strip()
         uploaded_file = request.FILES.get('file')
-        is_family_doc = str(request.data.get('is_family_doc', 'false')).lower() == 'true'
-        doc_type = request.data.get('doc_type', 'family' if is_family_doc else 'personal')
+        is_family_doc = str(
+            request.data.get('is_family_doc', 'false')
+        ).lower() == 'true'
+
+        doc_type = request.data.get(
+            'doc_type',
+            'family' if is_family_doc else 'personal'
+        )
 
         if not title:
             return Response(
@@ -241,10 +257,30 @@ class UploadDocumentView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        try:
+            validate_document_file(uploaded_file)
+        except DjangoValidationError as error:
+            return Response(
+                {
+                    'error': (
+                        error.messages[0]
+                        if hasattr(error, 'messages')
+                        else str(error)
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         if is_family_doc:
             access = 'family'
         else:
             access = request.data.get('access', 'owner')
+
+            if access not in PERSONAL_DOCUMENT_ACCESS_VALUES:
+                return Response(
+                    {'error': 'Некорректный уровень доступа к документу'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
         document = Document.objects.create(
             title=title,
@@ -291,8 +327,19 @@ class DocumentDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get_document(self, document_id, user):
+        family = get_user_family(user)
+
+        if not family:
+            return None, Response(
+                {'error': 'Вы не состоите в семье'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         try:
-            document = Document.objects.get(id=document_id)
+            document = Document.objects.get(
+                id=document_id,
+                family=family
+            )
         except Document.DoesNotExist:
             return None, Response(
                 {'error': 'Документ не найден'},
@@ -301,8 +348,8 @@ class DocumentDetailView(APIView):
 
         if not document.user_has_access(user):
             return None, Response(
-                {'error': 'Нет доступа к документу'},
-                status=status.HTTP_403_FORBIDDEN
+                {'error': 'Документ не найден'},
+                status=status.HTTP_404_NOT_FOUND
             )
 
         return document, None
@@ -354,6 +401,12 @@ class DocumentDetailView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
+            if access not in PERSONAL_DOCUMENT_ACCESS_VALUES:
+                return Response(
+                    {'error': 'Некорректный уровень доступа к документу'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
             document.access = access
 
             if access != 'selected':
@@ -362,6 +415,12 @@ class DocumentDetailView(APIView):
         document.save()
 
         if shared_with is not None:
+            if document.is_family_doc:
+                return Response(
+                    {'error': 'У общего документа нельзя менять доступ'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
             if not document.user_can_manage_access(request.user):
                 return Response(
                     {'error': 'Нет прав управлять доступом'},
@@ -406,13 +465,14 @@ class DocumentDetailView(APIView):
             {'message': 'Документ удалён'},
             status=status.HTTP_200_OK
         )
-    
+
 
 class DocumentFamilyMembersView(APIView):
     """
     Члены семьи для настройки доступа к документу.
     GET /api/documents/family-members/
     """
+
     permission_classes = [IsAuthenticated]
 
     def get(self, request):

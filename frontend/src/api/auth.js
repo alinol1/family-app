@@ -1,5 +1,11 @@
 import client from './client';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+
+import {
+  saveTokens,
+  getRefreshToken,
+  clearTokens,
+  hasTokens,
+} from './tokenStorage';
 
 // Регистрация
 export const register = async (userData) => {
@@ -14,23 +20,24 @@ export const login = async (username, password) => {
     password,
   });
 
-  // Сохраняем токены
-  await AsyncStorage.setItem('access_token', response.data.access);
-  await AsyncStorage.setItem('refresh_token', response.data.refresh);
+  await saveTokens(response.data.access, response.data.refresh);
 
   return response.data;
 };
 
 // Выход
 export const logout = async () => {
-  const refresh = await AsyncStorage.getItem('refresh_token');
+  const refresh = await getRefreshToken();
+
   try {
-    await client.post('/auth/logout/', { refresh });
-  } catch (e) {
-    // Даже если сервер не ответил — всё равно удаляем токены
+    if (refresh) {
+      await client.post('/auth/logout/', { refresh });
+    }
+  } catch (error) {
+    // Даже если сервер не ответил — всё равно удаляем токены на устройстве
   }
-  await AsyncStorage.removeItem('access_token');
-  await AsyncStorage.removeItem('refresh_token');
+
+  await clearTokens();
 };
 
 // Получить профиль
@@ -47,10 +54,8 @@ export const updateProfile = async (data) => {
 
 // Проверить авторизован ли пользователь
 export const isAuthenticated = async () => {
-  const token = await AsyncStorage.getItem('access_token');
-  return !!token;
+  return hasTokens();
 };
-
 
 // Запросить сброс пароля
 export const requestPasswordReset = async (email) => {
@@ -64,16 +69,23 @@ export const verifyPasswordResetCode = async (email, code) => {
     email,
     code,
   });
+
   return response.data;
 };
 
 // Подтвердить новый пароль
-export const confirmPasswordReset = async (email, code, newPassword, newPassword2) => {
+export const confirmPasswordReset = async (
+  email,
+  code,
+  newPassword,
+  newPassword2
+) => {
   const response = await client.post('/auth/password-reset/confirm/', {
     email,
     code,
     new_password: newPassword,
     new_password2: newPassword2,
   });
+
   return response.data;
 };

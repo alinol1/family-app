@@ -1,25 +1,55 @@
 from django.urls import path
+
 from .views import (
-    CategoryListView,
-    FinanceRecordListView,
-    FamilyBalanceView,
-    FinanceStatisticsView,
+    CategoryListCreateView,
+    CategoryDetailView,
+    FinanceRecordListCreateView,
+    FinanceRecordDetailView,
     FamilyGoalView,
+    FinanceSummaryView,
+    FinanceStatisticsView,
 )
 
 urlpatterns = [
-    # Категории
-    path('categories/', CategoryListView.as_view(), name='categories'),
+    path(
+        'categories/',
+        CategoryListCreateView.as_view(),
+        name='finance_categories'
+    ),
 
-    # Записи
-    path('records/', FinanceRecordListView.as_view(), name='records'),
+    path(
+        'categories/<int:category_id>/',
+        CategoryDetailView.as_view(),
+        name='finance_category_detail'
+    ),
 
-    # Баланс
-    path('balance/', FamilyBalanceView.as_view(), name='balance'),
+    path(
+        'records/',
+        FinanceRecordListCreateView.as_view(),
+        name='finance_records'
+    ),
 
-    # Статистика
-    path('statistics/', FinanceStatisticsView.as_view(), name='statistics'),
+    path(
+        'records/<int:record_id>/',
+        FinanceRecordDetailView.as_view(),
+        name='finance_record_detail'
+    ),
 
-    # Семейная цель
-    path('goal/', FamilyGoalView.as_view(), name='goal'),
+    path(
+        'goal/',
+        FamilyGoalView.as_view(),
+        name='finance_goal'
+    ),
+
+    path(
+        'summary/',
+        FinanceSummaryView.as_view(),
+        name='finance_summary'
+    ),
+
+    path(
+        'statistics/',
+        FinanceStatisticsView.as_view(),
+        name='finance_statistics'
+    ),
 ]

@@ -1,21 +1,33 @@
 from rest_framework import serializers
+
 from .models import Chat, Message
-from users.models import User
+
+
+def get_user_display_name(user):
+    """
+    Возвращает отображаемое имя пользователя.
+    """
+    if not user:
+        return None
+
+    name = f'{user.first_name} {user.last_name}'.strip()
+    return name or user.username
 
 
 class MessageSerializer(serializers.ModelSerializer):
     """
     Сериализатор сообщения.
+
+    Важно:
+    - сырое поле media не отдаём;
+    - отдаём только media_url;
+    - sender оставляем как id пользователя;
+    - sender_name нужен для отображения.
     """
 
-    # Имя отправителя
     sender_name = serializers.SerializerMethodField()
-
-    # Аватар отправителя
-    sender_avatar = serializers.ImageField(
-        source='sender.avatar',
-        read_only=True
-    )
+    sender_avatar_url = serializers.SerializerMethodField()
+    media_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Message
@@ -24,37 +36,57 @@ class MessageSerializer(serializers.ModelSerializer):
             'chat',
             'sender',
             'sender_name',
-            'sender_avatar',
+            'sender_avatar_url',
             'text',
-            'media',
+            'media_url',
             'is_read',
             'created_at',
         ]
+
         read_only_fields = [
             'id',
+            'chat',
             'sender',
+            'sender_name',
+            'sender_avatar_url',
+            'text',
+            'media_url',
             'is_read',
             'created_at',
         ]
 
     def get_sender_name(self, obj):
-        return f'{obj.sender.first_name} {obj.sender.last_name}'
+        return get_user_display_name(obj.sender)
+
+    def get_sender_avatar_url(self, obj):
+        if not obj.sender:
+            return None
+
+        if not obj.sender.avatar:
+            return None
+
+        return obj.sender.avatar.url
+
+    def get_media_url(self, obj):
+        if not obj.media:
+            return None
+
+        return obj.media.url
 
 
 class ChatSerializer(serializers.ModelSerializer):
     """
     Сериализатор чата.
+
+    Важно:
+    - family наружу не отдаём;
+    - chat_name формируется на backend;
+    - unread_count считается для текущего пользователя.
     """
 
-    # Последнее сообщение
     last_message = serializers.SerializerMethodField()
-
-    # Количество непрочитанных
     unread_count = serializers.SerializerMethodField()
-
-    # Название чата
     chat_name = serializers.SerializerMethodField()
-
     members_count = serializers.SerializerMethodField()
 
     class Meta:
@@ -62,7 +94,16 @@ class ChatSerializer(serializers.ModelSerializer):
         fields = [
             'id',
             'chat_type',
-            'family',
+            'chat_name',
+            'last_message',
+            'unread_count',
+            'created_at',
+            'members_count',
+        ]
+
+        read_only_fields = [
+            'id',
+            'chat_type',
             'chat_name',
             'last_message',
             'unread_count',
@@ -72,30 +113,45 @@ class ChatSerializer(serializers.ModelSerializer):
 
     def get_members_count(self, obj):
         return obj.members.count()
-    
+
     def get_last_message(self, obj):
-        last = obj.messages.last()
-        if last:
-            return {
-                'text': last.text,
-                'sender': last.sender.first_name,
-                'created_at': last.created_at,
-            }
-        return None
+        last_message = obj.messages.order_by('created_at').last()
+
+        if not last_message:
+            return None
+
+        return {
+            'text': last_message.text,
+            'sender': get_user_display_name(last_message.sender),
+            'created_at': last_message.created_at,
+        }
 
     def get_unread_count(self, obj):
-        user = self.context.get('request').user
+        request = self.context.get('request')
+
+        if not request or not request.user or request.user.is_anonymous:
+            return 0
+
         return obj.messages.filter(
             is_read=False
-        ).exclude(sender=user).count()
+        ).exclude(
+            sender=request.user
+        ).count()
 
     def get_chat_name(self, obj):
         if obj.chat_type == 'family':
-            return obj.family.name
+            return obj.family.name if obj.family else 'Семейный чат'
 
-        # Для личного чата показываем имя собеседника
-        user = self.context.get('request').user
-        other = obj.members.exclude(id=user.id).first()
-        if other:
-            return f'{other.first_name} {other.last_name}'
+        request = self.context.get('request')
+
+        if not request or not request.user or request.user.is_anonymous:
+            return 'Личный чат'
+
+        other_user = obj.members.exclude(
+            id=request.user.id
+        ).first()
+
+        if other_user:
+            return get_user_display_name(other_user)
+
         return 'Личный чат'

@@ -5,6 +5,7 @@ from .views import (
     FamilyDetailView,
     LeaveFamilyView,
     RemoveMemberView,
+    MyFamilyView,
 )
 
 urlpatterns = [
@@ -22,4 +23,6 @@ urlpatterns = [
 
     # Удалить участника
     path('members/<int:user_id>/', RemoveMemberView.as_view(), name='remove_member'),
+
+    path('my/', MyFamilyView.as_view(), name='my_family'),
 ]

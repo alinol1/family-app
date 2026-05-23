@@ -60,6 +60,47 @@ class User(AbstractUser):
         verbose_name='Медицинские заметки'
     )
 
+
+    city = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        verbose_name='Город'
+    )
+
+    chronic_diseases = models.TextField(
+        blank=True,
+        default='',
+        verbose_name='Хронические заболевания'
+    )
+
+    medications = models.TextField(
+        blank=True,
+        default='',
+        verbose_name='Принимаемые лекарства'
+    )
+
+    emergency_contact_name = models.CharField(
+        max_length=150,
+        blank=True,
+        default='',
+        verbose_name='Имя экстренного контакта'
+    )
+
+    emergency_contact_phone = models.CharField(
+        max_length=30,
+        blank=True,
+        default='',
+        verbose_name='Телефон экстренного контакта'
+    )
+
+
+
+
+
+
+
+
     class Meta:
         verbose_name = 'Пользователь'
         verbose_name_plural = 'Пользователи'

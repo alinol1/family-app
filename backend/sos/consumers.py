@@ -21,6 +21,10 @@ class SOSConsumer(AsyncWebsocketConsumer):
         self.family_id = family_id
         self.group_name = f'family_sos_{self.family_id}'
 
+        if not self.channel_layer:
+            await self.close()
+            return
+
         await self.channel_layer.group_add(
             self.group_name,
             self.channel_name
@@ -29,29 +33,44 @@ class SOSConsumer(AsyncWebsocketConsumer):
         await self.accept()
 
     async def disconnect(self, close_code):
-        if hasattr(self, 'group_name'):
+        if hasattr(self, 'group_name') and self.channel_layer:
             await self.channel_layer.group_discard(
                 self.group_name,
                 self.channel_name
             )
 
     async def sos_alert(self, event):
+        signal = event.get('signal')
+
+        if not signal:
+            return
+
         await self.send(text_data=json.dumps({
             'type': 'sos_alert',
-            'signal': event['signal'],
+            'signal': signal,
         }))
 
     async def sos_confirmed(self, event):
+        signal = event.get('signal')
+
+        if not signal:
+            return
+
         await self.send(text_data=json.dumps({
             'type': 'sos_confirmed',
-            'signal': event['signal'],
+            'signal': signal,
             'confirmed_by': event.get('confirmed_by'),
         }))
 
     async def sos_cancelled(self, event):
+        signal = event.get('signal')
+
+        if not signal:
+            return
+
         await self.send(text_data=json.dumps({
             'type': 'sos_cancelled',
-            'signal': event['signal'],
+            'signal': signal,
             'cancelled_by': event.get('cancelled_by'),
         }))
 
@@ -60,4 +79,4 @@ class SOSConsumer(AsyncWebsocketConsumer):
         if not hasattr(self.user, 'family_membership'):
             return None
 
-        return self.user.family_membership.family.id
+        return self.user.family_membership.family_id

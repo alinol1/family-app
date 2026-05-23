@@ -172,7 +172,7 @@ export default function Onboarding3Screen({ navigation }) {
                 ]}
                 allowFontScaling={false}
               >
-                Вся семья —{'\n'}в одном месте
+                Финансы, документы и фото — под рукой
               </Text>
 
               <Text
@@ -186,7 +186,7 @@ export default function Onboarding3Screen({ navigation }) {
                 ]}
                 allowFontScaling={false}
               >
-                Общайтесь, делитесь важным и оставайтесь рядом каждый день
+                Храните семейные воспоминания, важные документы в одном приложении
               </Text>
             </View>
           </View>

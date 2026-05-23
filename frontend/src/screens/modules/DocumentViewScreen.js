@@ -11,6 +11,7 @@ import {
   Alert,
   ActivityIndicator,
   RefreshControl,
+  Linking,
 } from 'react-native';
 
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -33,11 +34,39 @@ function getDocumentImage(document) {
     return { uri: document.file_url };
   }
 
-  if (document?.file) {
-    return { uri: document.file };
+  return require('../../../assets/images/document-placeholder.png');
+}
+
+function getFileExtension(value = '') {
+  if (!value) {
+    return '';
   }
 
-  return require('../../../assets/images/document-placeholder.png');
+  const cleanValue = value.split('?')[0];
+  const parts = cleanValue.split('.');
+
+  return parts.length > 1 ? parts.pop().toLowerCase() : '';
+}
+
+function isImageDocument(document) {
+  const titleExtension = getFileExtension(document?.title || '');
+  const urlExtension = getFileExtension(document?.file_url || '');
+
+  return [
+    'jpg',
+    'jpeg',
+    'png',
+    'webp',
+    'heic',
+    'heif',
+    'bmp',
+    'tiff',
+    'tif',
+  ].includes(titleExtension || urlExtension);
+}
+
+function getDocumentExtension(document) {
+  return getFileExtension(document?.title || document?.file_url || '') || 'file';
 }
 
 export default function DocumentViewScreen({ navigation, route }) {
@@ -58,6 +87,7 @@ export default function DocumentViewScreen({ navigation, route }) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isAccessSaving, setIsAccessSaving] = useState(false);
+  const [isOpeningFile, setIsOpeningFile] = useState(false);
 
   const [editVisible, setEditVisible] = useState(false);
   const [accessVisible, setAccessVisible] = useState(false);
@@ -86,6 +116,8 @@ export default function DocumentViewScreen({ navigation, route }) {
 
       const ids = (data?.shared_with || []).map((id) => Number(id));
       setSelectedMembers(ids);
+
+      return data;
     } catch (error) {
       console.log('Ошибка загрузки документа:', error.response?.data || error);
 
@@ -105,6 +137,8 @@ export default function DocumentViewScreen({ navigation, route }) {
           [{ text: 'Ок', onPress: () => navigation.goBack() }]
         );
       }
+
+      return null;
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -174,6 +208,41 @@ export default function DocumentViewScreen({ navigation, route }) {
 
       return [...prev, memberId];
     });
+  };
+
+  const openDocumentFile = async () => {
+    if (!documentId) {
+      Alert.alert('Ошибка', 'Документ не найден');
+      return;
+    }
+
+    try {
+      setIsOpeningFile(true);
+
+      const freshDocument = await getDocumentById(documentId);
+      setDocument(freshDocument);
+
+      const fileUrl = freshDocument?.file_url;
+
+      if (!fileUrl) {
+        Alert.alert('Ошибка', 'Ссылка на документ недоступна');
+        return;
+      }
+
+      const canOpen = await Linking.canOpenURL(fileUrl);
+
+      if (!canOpen) {
+        Alert.alert('Ошибка', 'Не удалось открыть документ');
+        return;
+      }
+
+      await Linking.openURL(fileUrl);
+    } catch (error) {
+      console.log('Ошибка открытия документа:', error.response?.data || error);
+      Alert.alert('Ошибка', 'Не удалось открыть документ');
+    } finally {
+      setIsOpeningFile(false);
+    }
   };
 
   const saveTitle = async () => {
@@ -387,11 +456,53 @@ export default function DocumentViewScreen({ navigation, route }) {
             />
           }
         >
-          <Image
-            source={getDocumentImage(document)}
-            style={styles.documentImage}
-            resizeMode="cover"
-          />
+          {isImageDocument(document) ? (
+            <Image
+              source={getDocumentImage(document)}
+              style={styles.documentImage}
+              resizeMode="cover"
+            />
+          ) : (
+            <View style={styles.fileCard}>
+              <View style={styles.fileIconCircle}>
+                <Ionicons name="document-text-outline" size={48} color="#9456FE" />
+              </View>
+
+              <Text
+                style={styles.fileTitle}
+                allowFontScaling={false}
+                numberOfLines={2}
+              >
+                {document?.title || 'Документ'}
+              </Text>
+
+              <Text style={styles.fileExtension} allowFontScaling={false}>
+                {getDocumentExtension(document).toUpperCase()}
+              </Text>
+
+              <TouchableOpacity
+                style={[
+                  styles.openFileButton,
+                  isOpeningFile && styles.disabledButton,
+                ]}
+                activeOpacity={0.85}
+                onPress={openDocumentFile}
+                disabled={isOpeningFile}
+              >
+                {isOpeningFile ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Ionicons name="open-outline" size={22} color="#FFFFFF" />
+
+                    <Text style={styles.openFileButtonText} allowFontScaling={false}>
+                      Открыть документ
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
         </ScrollView>
 
         <Modal
@@ -655,8 +766,64 @@ const styles = StyleSheet.create({
   documentImage: {
     width: '100%',
     height: 270,
+    borderRadius: 24,
     backgroundColor: '#E7E7E7',
     marginBottom: 12,
+  },
+
+  fileCard: {
+    width: '100%',
+    minHeight: 270,
+    borderRadius: 28,
+    backgroundColor: '#F7F7F7',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 28,
+    marginBottom: 12,
+  },
+
+  fileIconCircle: {
+    width: 92,
+    height: 92,
+    borderRadius: 46,
+    backgroundColor: '#F3ECFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+
+  fileTitle: {
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.bodyL,
+    color: '#262626',
+    textAlign: 'center',
+  },
+
+  fileExtension: {
+    marginTop: 6,
+    fontFamily: fontFamily.regular,
+    fontSize: fontSize.caption,
+    color: '#858585',
+    textAlign: 'center',
+  },
+
+  openFileButton: {
+    height: 52,
+    borderRadius: 18,
+    backgroundColor: '#9456FE',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 22,
+    marginTop: 22,
+  },
+
+  openFileButtonText: {
+    marginLeft: 8,
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.bodyM,
+    color: '#FFFFFF',
   },
 
   loaderContainer: {

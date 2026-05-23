@@ -7,6 +7,7 @@ import {
   TextInput,
   ActivityIndicator,
 } from 'react-native';
+
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,10 +16,12 @@ import { useFocusEffect } from '@react-navigation/native';
 import { fontFamily, fontSize } from '../../utils/fonts';
 import { useLayout } from '../../utils/useLayout';
 import { getChats } from '../../api/chat';
-
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getAccessToken } from '../../api/tokenStorage';
 
 const WS_BASE_URL = 'ws://192.168.3.2:8000';
+
+// Для VPS потом заменим на:
+// const WS_BASE_URL = 'wss://api.mayak-family.ru';
 
 export default function ChatsScreen({ navigation }) {
   const { screenPadding } = useLayout();
@@ -27,15 +30,36 @@ export default function ChatsScreen({ navigation }) {
   const [search, setSearch] = useState('');
   const [chats, setChats] = useState([]);
   const [loading, setLoading] = useState(true);
+
   const socketRef = React.useRef(null);
 
+  const sortChats = (chatsList) => {
+    return [...chatsList].sort((a, b) => {
+      if (a.chat_type === 'family') return -1;
+      if (b.chat_type === 'family') return 1;
+
+      const aTime = a.last_message?.created_at || a.created_at;
+      const bTime = b.last_message?.created_at || b.created_at;
+
+      return new Date(bTime) - new Date(aTime);
+    });
+  };
 
   const connectChatsWebSocket = async () => {
-    const token = await AsyncStorage.getItem('access_token');
+    const token = await getAccessToken();
 
-    if (!token) return;
+    if (!token) {
+      return;
+    }
 
-    const socket = new WebSocket(`${WS_BASE_URL}/ws/chats/?token=${token}`);
+    if (socketRef.current) {
+      socketRef.current.close();
+      socketRef.current = null;
+    }
+
+    const socket = new WebSocket(
+      `${WS_BASE_URL}/ws/chats/?token=${encodeURIComponent(token)}`
+    );
 
     socketRef.current = socket;
 
@@ -44,34 +68,32 @@ export default function ChatsScreen({ navigation }) {
     };
 
     socket.onmessage = (event) => {
-      const data = JSON.parse(event.data);
+      try {
+        const data = JSON.parse(event.data);
 
-      if (data.type === 'chat_update') {
-        setChats((prevChats) => {
-          const updatedChat = data.chat;
+        if (data.type === 'chat_update') {
+          setChats((prevChats) => {
+            const updatedChat = data.chat;
 
-          const exists = prevChats.some((chat) => chat.id === updatedChat.id);
-
-          let nextChats;
-
-          if (exists) {
-            nextChats = prevChats.map((chat) =>
-              chat.id === updatedChat.id ? updatedChat : chat
+            const exists = prevChats.some(
+              (chat) => chat.id === updatedChat.id
             );
-          } else {
-            nextChats = [updatedChat, ...prevChats];
-          }
 
-          return nextChats.sort((a, b) => {
-            if (a.chat_type === 'family') return -1;
-            if (b.chat_type === 'family') return 1;
+            let nextChats;
 
-            const aTime = a.last_message?.created_at || a.created_at;
-            const bTime = b.last_message?.created_at || b.created_at;
+            if (exists) {
+              nextChats = prevChats.map((chat) =>
+                chat.id === updatedChat.id ? updatedChat : chat
+              );
+            } else {
+              nextChats = [updatedChat, ...prevChats];
+            }
 
-            return new Date(bTime) - new Date(aTime);
+            return sortChats(nextChats);
           });
-        });
+        }
+      } catch (error) {
+        console.log('Ошибка обработки обновления чатов:', error);
       }
     };
 
@@ -81,13 +103,12 @@ export default function ChatsScreen({ navigation }) {
 
     socket.onclose = () => {
       console.log('Chats WebSocket закрыт');
+
+      if (socketRef.current === socket) {
+        socketRef.current = null;
+      }
     };
   };
-
-
-
-
-
 
   useFocusEffect(
     useCallback(() => {
@@ -98,16 +119,7 @@ export default function ChatsScreen({ navigation }) {
           setLoading(true);
 
           const data = await getChats();
-
-          const sortedChats = data.sort((a, b) => {
-            if (a.chat_type === 'family') return -1;
-            if (b.chat_type === 'family') return 1;
-
-            const aTime = a.last_message?.created_at || a.created_at;
-            const bTime = b.last_message?.created_at || b.created_at;
-
-            return new Date(bTime) - new Date(aTime);
-          });
+          const sortedChats = sortChats(data || []);
 
           if (isActive) {
             setChats(sortedChats);
@@ -127,7 +139,9 @@ export default function ChatsScreen({ navigation }) {
 
       return () => {
         isActive = false;
+
         socketRef.current?.close();
+        socketRef.current = null;
       };
     }, [])
   );
@@ -211,7 +225,7 @@ export default function ChatsScreen({ navigation }) {
             {lastMessage
               ? new Date(lastMessage.created_at).toLocaleTimeString([], {
                   hour: '2-digit',
-                  minute: '2-digit',  
+                  minute: '2-digit',
                 })
               : ''}
           </Text>

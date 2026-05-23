@@ -7,15 +7,18 @@ import {
   Platform,
 } from 'react-native';
 
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 
 import { fontFamily } from '../utils/fonts';
 import { getProfile } from '../api/auth';
+import { getAccessToken } from '../api/tokenStorage';
 
 const WS_BASE_URL = Platform.OS === 'web'
   ? 'ws://127.0.0.1:8000'
   : 'ws://192.168.3.2:8000';
+
+// Для VPS потом заменим на:
+// const WS_BASE_URL = 'wss://api.mayak-family.ru';
 
 function getToastText(type, name) {
   if (type === 'confirmed_by_me') {
@@ -128,11 +131,20 @@ export default function SOSGlobalOverlay() {
   };
 
   const connectSocket = async () => {
-    const token = await AsyncStorage.getItem('access_token');
+    const token = await getAccessToken();
 
-    if (!token) return;
+    if (!token) {
+      return;
+    }
 
-    const socket = new WebSocket(`${WS_BASE_URL}/ws/sos/?token=${token}`);
+    if (socketRef.current) {
+      socketRef.current.close();
+    }
+
+    const socket = new WebSocket(
+      `${WS_BASE_URL}/ws/sos/?token=${encodeURIComponent(token)}`
+    );
+
     socketRef.current = socket;
 
     socket.onopen = () => {
@@ -168,13 +180,23 @@ export default function SOSGlobalOverlay() {
 
     socket.onclose = () => {
       console.log('Global SOS mini notifications закрыты');
+
+      if (socketRef.current === socket) {
+        socketRef.current = null;
+      }
     };
   };
 
   useEffect(() => {
+    let isMounted = true;
+
     const init = async () => {
       try {
         const profile = await getProfile();
+
+        if (!isMounted) {
+          return;
+        }
 
         currentUserIdRef.current = profile.id;
 
@@ -190,7 +212,10 @@ export default function SOSGlobalOverlay() {
     init();
 
     return () => {
+      isMounted = false;
+
       socketRef.current?.close();
+      socketRef.current = null;
 
       if (toastTimerRef.current) {
         clearTimeout(toastTimerRef.current);

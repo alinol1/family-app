@@ -11,12 +11,32 @@ from .models import SOSSignal
 from .serializers import SOSSignalSerializer
 
 
+def get_user_family(user):
+    """
+    Возвращает семью пользователя.
+    Если пользователь не состоит в семье — возвращает None.
+    """
+    if not hasattr(user, 'family_membership'):
+        return None
+
+    return user.family_membership.family
+
+
 def get_user_display_name(user):
+    """
+    Возвращает красивое имя пользователя.
+    """
     return f'{user.first_name} {user.last_name}'.strip() or user.username
 
 
 def send_sos_websocket_event(family_id, event_type, signal_data, extra_data=None):
+    """
+    Отправляет WebSocket-событие всем участникам семьи.
+    """
     channel_layer = get_channel_layer()
+
+    if not channel_layer:
+        return
 
     data = {
         'type': event_type,
@@ -32,23 +52,50 @@ def send_sos_websocket_event(family_id, event_type, signal_data, extra_data=None
     )
 
 
+def get_family_signal_or_404(user, signal_id):
+    """
+    Безопасно получает SOS-сигнал только из семьи пользователя.
+    Если пользователь не в семье или сигнал чужой — возвращает ошибку.
+    """
+    family = get_user_family(user)
+
+    if not family:
+        return None, None, Response(
+            {'error': 'Вы не состоите в семье'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        signal = SOSSignal.objects.get(
+            id=signal_id,
+            family=family
+        )
+    except SOSSignal.DoesNotExist:
+        return family, None, Response(
+            {'error': 'Сигнал не найден'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    return family, signal, None
+
+
 class SendSOSView(APIView):
     """
     Отправка экстренного сигнала.
     POST /api/sos/send/
     """
+
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        if not hasattr(request.user, 'family_membership'):
+        family = get_user_family(request.user)
+
+        if not family:
             return Response(
                 {'error': 'Вы не состоите в семье'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        family = request.user.family_membership.family
-
-        # Если уже есть активный сигнал этого пользователя — не плодим дубли
         existing_signal = SOSSignal.objects.filter(
             family=family,
             sender=request.user
@@ -86,19 +133,20 @@ class SendSOSView(APIView):
 
 class ActiveSOSView(APIView):
     """
-    Активный SOS сигнал семьи.
+    Активный SOS-сигнал семьи.
     GET /api/sos/active/
     """
+
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        if not hasattr(request.user, 'family_membership'):
+        family = get_user_family(request.user)
+
+        if not family:
             return Response(
                 {'error': 'Вы не состоите в семье'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-
-        family = request.user.family_membership.family
 
         signal = SOSSignal.objects.filter(
             family=family
@@ -121,27 +169,17 @@ class ConfirmSOSView(APIView):
     Подтвердить получение сигнала.
     POST /api/sos/<signal_id>/confirm/
     """
+
     permission_classes = [IsAuthenticated]
 
     def post(self, request, signal_id):
-        if not hasattr(request.user, 'family_membership'):
-            return Response(
-                {'error': 'Вы не состоите в семье'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        family, signal, error_response = get_family_signal_or_404(
+            user=request.user,
+            signal_id=signal_id
+        )
 
-        family = request.user.family_membership.family
-
-        try:
-            signal = SOSSignal.objects.get(
-                id=signal_id,
-                family=family
-            )
-        except SOSSignal.DoesNotExist:
-            return Response(
-                {'error': 'Сигнал не найден'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+        if error_response:
+            return error_response
 
         if signal.status == 'cancelled':
             return Response(
@@ -149,7 +187,7 @@ class ConfirmSOSView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        if signal.sender == request.user:
+        if signal.sender_id == request.user.id:
             return Response(
                 {'error': 'Нельзя подтвердить свой сигнал'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -184,24 +222,28 @@ class CancelSOSView(APIView):
     Отменить сигнал.
     POST /api/sos/<signal_id>/cancel/
     """
+
     permission_classes = [IsAuthenticated]
 
     def post(self, request, signal_id):
-        if not hasattr(request.user, 'family_membership'):
+        family, signal, error_response = get_family_signal_or_404(
+            user=request.user,
+            signal_id=signal_id
+        )
+
+        if error_response:
+            return error_response
+
+        if signal.sender_id != request.user.id:
             return Response(
-                {'error': 'Вы не состоите в семье'},
-                status=status.HTTP_400_BAD_REQUEST
+                {'error': 'Только отправитель может отменить SOS-сигнал'},
+                status=status.HTTP_403_FORBIDDEN
             )
 
-        try:
-            signal = SOSSignal.objects.get(
-                id=signal_id,
-                sender=request.user
-            )
-        except SOSSignal.DoesNotExist:
+        if signal.status == 'cancelled':
             return Response(
-                {'error': 'Сигнал не найден'},
-                status=status.HTTP_404_NOT_FOUND
+                {'error': 'Сигнал уже отменён'},
+                status=status.HTTP_400_BAD_REQUEST
             )
 
         signal.status = 'cancelled'
@@ -217,7 +259,7 @@ class CancelSOSView(APIView):
         }
 
         send_sos_websocket_event(
-            family_id=signal.family.id,
+            family_id=family.id,
             event_type='sos_cancelled',
             signal_data=signal_data,
             extra_data={
@@ -233,19 +275,20 @@ class CancelSOSView(APIView):
 
 class SOSHistoryView(APIView):
     """
-    История SOS сигналов семьи.
+    История SOS-сигналов семьи.
     GET /api/sos/history/
     """
+
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        if not hasattr(request.user, 'family_membership'):
+        family = get_user_family(request.user)
+
+        if not family:
             return Response(
                 {'error': 'Вы не состоите в семье'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-
-        family = request.user.family_membership.family
 
         signals = SOSSignal.objects.filter(
             family=family

@@ -2,13 +2,53 @@ from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+
 from .models import Family, FamilyMember
 from .serializers import (
     FamilySerializer,
     CreateFamilySerializer,
     JoinFamilySerializer,
 )
+
 from chat.models import Chat
+
+from core.throttles import (
+    FamilyJoinUserThrottle,
+    FamilyJoinCodeThrottle,
+)
+
+class MyFamilyView(APIView):
+    """
+    Возвращает семью текущего пользователя.
+    Пользователь не передаёт family_id.
+    Backend сам определяет семью через request.user.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+
+        if not hasattr(user, 'family_membership'):
+            return Response(
+                {'detail': 'Пользователь не состоит в семье'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        family = user.family_membership.family
+
+        serializer = FamilySerializer(
+            family,
+            context={'request': request}
+        )
+
+        data = serializer.data
+
+        for member in data.get('members', []):
+            member['is_current_user'] = member.get('user_id') == user.id
+
+        return Response(data, status=status.HTTP_200_OK)
+
 
 class CreateFamilyView(APIView):
     """
@@ -70,6 +110,10 @@ class JoinFamilyView(APIView):
     POST /api/families/join/
     """
     permission_classes = [IsAuthenticated]
+    throttle_classes = [
+        FamilyJoinUserThrottle,
+        FamilyJoinCodeThrottle,
+    ]
 
     def post(self, request):
         # Проверяем: пользователь уже в семье?
@@ -132,8 +176,6 @@ class JoinFamilyView(APIView):
                     )
 
                     personal_chat.members.add(request.user, other_user)
-
-
 
             return Response(
                 FamilySerializer(family).data,

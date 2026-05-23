@@ -17,11 +17,16 @@ export const getMyDocuments = async (search = '') => {
 };
 
 export const getSharedDocuments = async (ownerId = null, search = '') => {
+  const params = {
+    search,
+  };
+
+  if (ownerId) {
+    params.owner_id = ownerId;
+  }
+
   const response = await client.get('/documents/shared/', {
-    params: {
-      owner_id: ownerId,
-      search,
-    },
+    params,
   });
 
   return response.data;
@@ -48,9 +53,13 @@ export const uploadDocument = async ({
   docType = 'other',
   isFamilyDoc = false,
 }) => {
+  if (!file) {
+    throw new Error('Файл обязателен');
+  }
+
   const formData = new FormData();
 
-  formData.append('title', title);
+  formData.append('title', title || 'Документ');
   formData.append('doc_type', docType);
   formData.append('is_family_doc', String(isFamilyDoc));
   formData.append('file', file);

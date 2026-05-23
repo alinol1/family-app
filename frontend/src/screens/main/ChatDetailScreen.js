@@ -11,7 +11,7 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,8 +20,12 @@ import { fontFamily, fontSize } from '../../utils/fonts';
 import { useLayout } from '../../utils/useLayout';
 import { getMessages } from '../../api/chat';
 import { getProfile } from '../../api/auth';
+import { getAccessToken } from '../../api/tokenStorage';
 
 const WS_BASE_URL = 'ws://192.168.3.2:8000';
+
+// Для VPS потом заменим на:
+// const WS_BASE_URL = 'wss://api.mayak-family.ru';
 
 export default function ChatDetailScreen({ navigation, route }) {
   const { screenPadding } = useLayout();
@@ -80,30 +84,39 @@ export default function ChatDetailScreen({ navigation, route }) {
   };
 
   const connectWebSocket = async () => {
-    const token = await AsyncStorage.getItem('access_token');
+    const token = await getAccessToken();
 
     if (!token) {
       Alert.alert('Ошибка', 'Токен авторизации не найден');
       return;
     }
 
+    if (socketRef.current) {
+      socketRef.current.close();
+      socketRef.current = null;
+    }
+
     const socket = new WebSocket(
-      `${WS_BASE_URL}/ws/chat/${chatId}/?token=${token}`
+      `${WS_BASE_URL}/ws/chat/${chatId}/?token=${encodeURIComponent(token)}`
     );
 
     socketRef.current = socket;
 
     socket.onopen = () => {
       setSocketConnected(true);
-      console.log('WebSocket подключён');
+      console.log('WebSocket чата подключён');
     };
 
     socket.onmessage = (event) => {
-      const data = JSON.parse(event.data);
+      try {
+        const data = JSON.parse(event.data);
 
-      if (data.type === 'message') {
-        setMessages((prev) => [...prev, data.message]);
-        scrollToBottom();
+        if (data.type === 'message') {
+          setMessages((prev) => [...prev, data.message]);
+          scrollToBottom();
+        }
+      } catch (error) {
+        console.log('Ошибка обработки сообщения WebSocket:', error);
       }
     };
 
@@ -113,7 +126,11 @@ export default function ChatDetailScreen({ navigation, route }) {
 
     socket.onclose = () => {
       setSocketConnected(false);
-      console.log('WebSocket закрыт');
+      console.log('WebSocket чата закрыт');
+
+      if (socketRef.current === socket) {
+        socketRef.current = null;
+      }
     };
   };
 
@@ -125,7 +142,7 @@ export default function ChatDetailScreen({ navigation, route }) {
       setCurrentUserId(profile.id);
 
       const data = await getMessages(chatId);
-      setMessages(data);
+      setMessages(data || []);
 
       await connectWebSocket();
     } catch (error) {
@@ -141,11 +158,14 @@ export default function ChatDetailScreen({ navigation, route }) {
 
     return () => {
       socketRef.current?.close();
+      socketRef.current = null;
     };
   }, [chatId]);
 
   const handleSend = () => {
-    if (!text.trim()) return;
+    const trimmedText = text.trim();
+
+    if (!trimmedText) return;
 
     if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
       Alert.alert('Ошибка', 'Соединение с чатом ещё не установлено');
@@ -154,7 +174,7 @@ export default function ChatDetailScreen({ navigation, route }) {
 
     socketRef.current.send(
       JSON.stringify({
-        text: text.trim(),
+        text: trimmedText,
       })
     );
 
@@ -305,9 +325,7 @@ export default function ChatDetailScreen({ navigation, route }) {
           <View style={styles.inputWrapper}>
             <TextInput
               style={styles.messageInput}
-              placeholder={
-                socketConnected ? 'Сообщение' : 'Подключение...'
-              }
+              placeholder={socketConnected ? 'Сообщение' : 'Подключение...'}
               placeholderTextColor="#CDCDCD"
               value={text}
               onChangeText={setText}

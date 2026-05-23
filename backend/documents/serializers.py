@@ -1,10 +1,17 @@
 from rest_framework import serializers
+
 from .models import Document
 
 
 class DocumentSerializer(serializers.ModelSerializer):
     """
     Сериализатор документа.
+
+    Важно:
+    - сырое поле file не отдаём;
+    - отдаём только file_url;
+    - family не отдаём;
+    - shared_with только для чтения.
     """
 
     uploaded_by_name = serializers.SerializerMethodField()
@@ -20,6 +27,11 @@ class DocumentSerializer(serializers.ModelSerializer):
         read_only=True
     )
 
+    shared_with = serializers.PrimaryKeyRelatedField(
+        many=True,
+        read_only=True
+    )
+
     shared_with_names = serializers.SerializerMethodField()
     file_url = serializers.SerializerMethodField()
 
@@ -30,29 +42,51 @@ class DocumentSerializer(serializers.ModelSerializer):
             'title',
             'doc_type',
             'doc_type_display',
-            'file',
             'file_url',
+
             'uploaded_by',
             'uploaded_by_name',
+
             'owner',
             'owner_name',
-            'family',
+
             'access',
             'access_display',
+
             'shared_with',
             'shared_with_names',
+
             'is_family_doc',
             'created_at',
         ]
+
         read_only_fields = [
             'id',
-            'uploaded_by',
-            'family',
-            'created_at',
+            'title',
+            'doc_type',
+            'doc_type_display',
             'file_url',
+
+            'uploaded_by',
+            'uploaded_by_name',
+
+            'owner',
+            'owner_name',
+
+            'access',
+            'access_display',
+
+            'shared_with',
+            'shared_with_names',
+
+            'is_family_doc',
+            'created_at',
         ]
 
     def get_uploaded_by_name(self, obj):
+        if not obj.uploaded_by:
+            return None
+
         name = f'{obj.uploaded_by.first_name} {obj.uploaded_by.last_name}'.strip()
         return name or obj.uploaded_by.username
 
@@ -73,13 +107,8 @@ class DocumentSerializer(serializers.ModelSerializer):
         ]
 
     def get_file_url(self, obj):
-        request = self.context.get('request')
-
         if not obj.file:
             return None
-
-        if request:
-            return request.build_absolute_uri(obj.file.url)
 
         return obj.file.url
 
@@ -87,22 +116,48 @@ class DocumentSerializer(serializers.ModelSerializer):
 class DocumentUpdateSerializer(serializers.Serializer):
     """
     Обновление документа.
+
+    Важно:
+    - access='family' здесь не разрешаем;
+    - общий документ создаётся через is_family_doc при загрузке;
+    - через PATCH можно только переименовать документ или выдать доступ selected.
     """
 
     title = serializers.CharField(
         max_length=100,
-        required=False
+        required=False,
+        allow_blank=False,
+        trim_whitespace=True
     )
 
     access = serializers.ChoiceField(
-        choices=['owner', 'family', 'selected'],
+        choices=['owner', 'selected'],
         required=False
     )
 
     shared_with = serializers.ListField(
-        child=serializers.IntegerField(),
+        child=serializers.IntegerField(min_value=1),
         required=False
     )
+
+    def validate_title(self, value):
+        value = str(value or '').strip()
+
+        if not value:
+            raise serializers.ValidationError(
+                'Название документа не может быть пустым'
+            )
+
+        return value
+
+    def validate_shared_with(self, value):
+        unique_ids = []
+
+        for user_id in value:
+            if user_id not in unique_ids:
+                unique_ids.append(user_id)
+
+        return unique_ids
 
 
 class SharedOwnerSerializer(serializers.Serializer):

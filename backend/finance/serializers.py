@@ -1,94 +1,154 @@
 from rest_framework import serializers
+
 from .models import Category, FinanceRecord, FamilyGoal
+
+
+def get_user_display_name(user):
+    """
+    Возвращает отображаемое имя пользователя.
+    """
+    if not user:
+        return None
+
+    name = f'{user.first_name} {user.last_name}'.strip()
+    return name or user.username
 
 
 class CategorySerializer(serializers.ModelSerializer):
     """
-    Сериализатор категории.
+    Сериализатор категории финансов.
+
+    Важно:
+    - family наружу не отдаём;
+    - created_by можно оставить как id пользователя;
+    - created_by_name нужен для отображения.
     """
+
+    type_display = serializers.CharField(
+        source='get_type_display',
+        read_only=True
+    )
+
+    created_by_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Category
-        fields = ['id', 'name', 'category_type', 'icon']
+        fields = [
+            'id',
+            'title',
+            'type',
+            'type_display',
+            'created_by',
+            'created_by_name',
+            'is_default',
+            'created_at',
+        ]
+
+        read_only_fields = [
+            'id',
+            'type_display',
+            'created_by',
+            'created_by_name',
+            'is_default',
+            'created_at',
+        ]
+
+    def get_created_by_name(self, obj):
+        return get_user_display_name(obj.created_by)
 
 
 class FinanceRecordSerializer(serializers.ModelSerializer):
     """
-    Сериализатор финансовой записи.
+    Сериализатор финансовой операции.
+
+    Важно:
+    - family наружу не отдаём;
+    - category оставляем как id категории;
+    - category_title отдаём для удобного отображения.
     """
 
-    # Имя того кто добавил
+    type_display = serializers.CharField(
+        source='get_type_display',
+        read_only=True
+    )
+
+    category_title = serializers.SerializerMethodField()
     created_by_name = serializers.SerializerMethodField()
-
-    # Название категории
-    category_name = serializers.CharField(
-        source='category.name',
-        read_only=True
-    )
-
-    # Иконка категории
-    category_icon = serializers.CharField(
-        source='category.icon',
-        read_only=True
-    )
 
     class Meta:
         model = FinanceRecord
         fields = [
             'id',
-            'record_type',
+            'type',
+            'type_display',
             'amount',
-            'description',
             'category',
-            'category_name',
-            'category_icon',
+            'category_title',
+            'description',
+            'date',
             'created_by',
             'created_by_name',
-            'family',
             'created_at',
-        ]
-        read_only_fields = [
-            'id',
-            'created_by',
-            'family',
-            'created_at',
+            'updated_at',
         ]
 
+        read_only_fields = [
+            'id',
+            'type_display',
+            'category_title',
+            'created_by',
+            'created_by_name',
+            'created_at',
+            'updated_at',
+        ]
+
+    def get_category_title(self, obj):
+        if obj.category:
+            return obj.category.title
+
+        return 'Без категории'
+
     def get_created_by_name(self, obj):
-        return f'{obj.created_by.first_name} {obj.created_by.last_name}'
+        return get_user_display_name(obj.created_by)
 
 
 class FamilyGoalSerializer(serializers.ModelSerializer):
     """
-    Сериализатор семейной цели.
+    Сериализатор семейной финансовой цели.
+
+    Важно:
+    - family наружу не отдаём;
+    - progress_percent отдаётся только для чтения.
     """
 
-    # Процент выполнения
-    progress_percent = serializers.IntegerField(read_only=True)
-
-    # Осталось накопить
-    remaining = serializers.SerializerMethodField()
+    created_by_name = serializers.SerializerMethodField()
+    progress_percent = serializers.SerializerMethodField()
 
     class Meta:
         model = FamilyGoal
         fields = [
             'id',
-            'name',
-            'target_amount',
+            'title',
             'current_amount',
+            'target_amount',
             'progress_percent',
-            'remaining',
-            'family',
             'created_by',
+            'created_by_name',
             'created_at',
-        ]
-        read_only_fields = [
-            'id',
-            'family',
-            'created_by',
-            'created_at',
+            'updated_at',
         ]
 
-    def get_remaining(self, obj):
-        remaining = obj.target_amount - obj.current_amount
-        return max(remaining, 0)
+        read_only_fields = [
+            'id',
+            'progress_percent',
+            'created_by',
+            'created_by_name',
+            'created_at',
+            'updated_at',
+        ]
+
+    def get_created_by_name(self, obj):
+        return get_user_display_name(obj.created_by)
+
+    def get_progress_percent(self, obj):
+        return obj.progress_percent

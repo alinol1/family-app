@@ -1,21 +1,34 @@
 from django.urls import path
+
 from .views import (
-    PhotoListView,
-    UploadPhotoView,
+    PhotoAlbumListCreateView,
+    PhotoAlbumDetailView,
+    AlbumPhotoListUploadView,
     PhotoDetailView,
-    PhotosByMonthView,
 )
 
 urlpatterns = [
-    # Все фото семьи
-    path('', PhotoListView.as_view(), name='photo_list'),
+    path(
+        'albums/',
+        PhotoAlbumListCreateView.as_view(),
+        name='photo_albums'
+    ),
 
-    # Загрузить фото
-    path('upload/', UploadPhotoView.as_view(), name='upload_photo'),
+    path(
+        'albums/<int:album_id>/',
+        PhotoAlbumDetailView.as_view(),
+        name='photo_album_detail'
+    ),
 
-    # Фото по месяцам
-    path('by-month/', PhotosByMonthView.as_view(), name='photos_by_month'),
+    path(
+        'albums/<int:album_id>/photos/',
+        AlbumPhotoListUploadView.as_view(),
+        name='album_photos'
+    ),
 
-    # Просмотр и удаление
-    path('<int:photo_id>/', PhotoDetailView.as_view(), name='photo_detail'),
+    path(
+        'photo/<int:photo_id>/',
+        PhotoDetailView.as_view(),
+        name='photo_detail'
+    ),
 ]

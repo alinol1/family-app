@@ -206,10 +206,12 @@ export default function LoginScreen({ navigation }) {
             style={styles.tempButton}
             activeOpacity={0.7}
             onPress={() => navigation.replace('MainTabs')}
+            
           >
             <Text style={styles.tempButtonText} allowFontScaling={false}>
               Зайти (временно)
             </Text>
+            
           </TouchableOpacity>
 
         {/* Нет аккаунта — прижато к низу */}
@@ -330,5 +332,11 @@ const styles = StyleSheet.create({
     fontFamily: fontFamily.medium,
     fontSize: 18,
     color: '#9456FE',
+  },
+
+  tempButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

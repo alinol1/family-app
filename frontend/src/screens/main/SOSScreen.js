@@ -12,7 +12,6 @@ import {
   Modal,
 } from 'react-native';
 
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,6 +20,7 @@ import Svg, { Circle } from 'react-native-svg';
 import { fontFamily, fontSize } from '../../utils/fonts';
 import { useLayout } from '../../utils/useLayout';
 import { getProfile } from '../../api/auth';
+import { getAccessToken } from '../../api/tokenStorage';
 
 import {
   sendSOS,
@@ -42,6 +42,9 @@ const STROKE_WIDTH = 7;
 const WS_BASE_URL = Platform.OS === 'web'
   ? 'ws://127.0.0.1:8000'
   : 'ws://192.168.3.2:8000';
+
+// Для VPS потом заменим на:
+// const WS_BASE_URL = 'wss://api.mayak-family.ru';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
@@ -165,11 +168,21 @@ export default function SOSScreen({ navigation }) {
   };
 
   const connectSOSWebSocket = async () => {
-    const token = await AsyncStorage.getItem('access_token');
+    const token = await getAccessToken();
 
-    if (!token) return;
+    if (!token) {
+      return;
+    }
 
-    const socket = new WebSocket(`${WS_BASE_URL}/ws/sos/?token=${token}`);
+    if (socketRef.current) {
+      socketRef.current.close();
+      socketRef.current = null;
+    }
+
+    const socket = new WebSocket(
+      `${WS_BASE_URL}/ws/sos/?token=${encodeURIComponent(token)}`
+    );
+
     socketRef.current = socket;
 
     socket.onopen = () => {
@@ -223,6 +236,10 @@ export default function SOSScreen({ navigation }) {
 
     socket.onclose = () => {
       console.log('SOS WebSocket закрыт');
+
+      if (socketRef.current === socket) {
+        socketRef.current = null;
+      }
     };
   };
 
@@ -254,6 +271,7 @@ export default function SOSScreen({ navigation }) {
 
     return () => {
       socketRef.current?.close();
+      socketRef.current = null;
     };
   }, []);
 
