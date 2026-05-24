@@ -326,10 +326,12 @@ const styles = StyleSheet.create({
 
   topBar: {
     width: '100%',
+    minHeight: 56,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 8,
+    marginTop: 13,
+    marginBottom: 8,
   },
 
   screenTitle: {

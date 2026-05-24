@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -23,12 +23,83 @@ import {
   getSharedOwners,
 } from '../../api/documents';
 
-function getLastDocumentTitle(documents) {
+function getDocumentDate(document) {
+  return (
+    document?.updated_at ||
+    document?.created_at ||
+    document?.uploaded_at ||
+    document?.date ||
+    null
+  );
+}
+
+function getTimestamp(value) {
+  if (!value) {
+    return 0;
+  }
+
+  const timestamp = new Date(value).getTime();
+
+  if (Number.isNaN(timestamp)) {
+    return 0;
+  }
+
+  return timestamp;
+}
+
+function getLatestDocument(documents) {
   if (!documents || documents.length === 0) {
+    return null;
+  }
+
+  return [...documents].sort((a, b) => {
+    return getTimestamp(getDocumentDate(b)) - getTimestamp(getDocumentDate(a));
+  })[0];
+}
+
+function getLastDocumentTitle(documents) {
+  const latestDocument = getLatestDocument(documents);
+
+  if (!latestDocument) {
     return 'Нет недавно добавленных';
   }
 
-  return documents[0]?.title || 'Нет недавно добавленных';
+  return latestDocument?.title || 'Нет недавно добавленных';
+}
+
+function formatUpdatedDate(value) {
+  if (!value) {
+    return '';
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+
+  return `${day}.${month} ${hours}:${minutes}`;
+}
+
+function getLastUpdatedText(documents) {
+  const latestDocument = getLatestDocument(documents);
+  const dateValue = getDocumentDate(latestDocument);
+
+  return formatUpdatedDate(dateValue);
+}
+
+function getOwnerUpdatedText(owner) {
+  return formatUpdatedDate(
+    owner?.last_document_updated_at ||
+      owner?.last_document_created_at ||
+      owner?.updated_at ||
+      owner?.created_at
+  );
 }
 
 export default function DocumentsScreen({ navigation }) {
@@ -86,8 +157,25 @@ export default function DocumentsScreen({ navigation }) {
     loadDocuments(false);
   };
 
-  const familyLastTitle = getLastDocumentTitle(familyDocuments);
-  const myLastTitle = getLastDocumentTitle(myDocuments);
+  const familyLastTitle = useMemo(
+    () => getLastDocumentTitle(familyDocuments),
+    [familyDocuments]
+  );
+
+  const myLastTitle = useMemo(
+    () => getLastDocumentTitle(myDocuments),
+    [myDocuments]
+  );
+
+  const familyUpdatedText = useMemo(
+    () => getLastUpdatedText(familyDocuments),
+    [familyDocuments]
+  );
+
+  const myUpdatedText = useMemo(
+    () => getLastUpdatedText(myDocuments),
+    [myDocuments]
+  );
 
   if (isLoading) {
     return (
@@ -169,8 +257,12 @@ export default function DocumentsScreen({ navigation }) {
                 Общие документы
               </Text>
 
-              <Text style={styles.familyDate} allowFontScaling={false}>
-                {familyDocuments.length > 0 ? 'Обновлено' : ''}
+              <Text
+                style={styles.familyDate}
+                allowFontScaling={false}
+                numberOfLines={1}
+              >
+                {familyUpdatedText}
               </Text>
             </View>
 
@@ -220,8 +312,12 @@ export default function DocumentsScreen({ navigation }) {
                 Личные документы
               </Text>
 
-              <Text style={styles.personalDate} allowFontScaling={false}>
-                {myDocuments.length > 0 ? 'Обновлено' : ''}
+              <Text
+                style={styles.personalDate}
+                allowFontScaling={false}
+                numberOfLines={1}
+              >
+                {myUpdatedText}
               </Text>
             </View>
 
@@ -274,54 +370,70 @@ export default function DocumentsScreen({ navigation }) {
             </View>
           ) : (
             <View style={styles.sharedGrid}>
-              {sharedOwners.map((owner) => (
-                <TouchableOpacity
-                  key={owner.id}
-                  style={styles.sharedCard}
-                  activeOpacity={0.86}
-                  onPress={() =>
-                    openDocumentList({
-                      title: owner.name,
-                      type: 'shared',
-                      ownerId: owner.id,
-                    })
-                  }
-                >
-                  <View style={styles.sharedTopRow}>
-                    <View style={styles.avatar}>
-                      <Ionicons name="person" size={22} color="#A4A4A4" />
+              {sharedOwners.map((owner) => {
+                const ownerUpdatedText = getOwnerUpdatedText(owner);
+
+                return (
+                  <TouchableOpacity
+                    key={owner.id}
+                    style={styles.sharedCard}
+                    activeOpacity={0.86}
+                    onPress={() =>
+                      openDocumentList({
+                        title: owner.name,
+                        type: 'shared',
+                        ownerId: owner.id,
+                      })
+                    }
+                  >
+                    <View style={styles.sharedTopRow}>
+                      <View style={styles.avatar}>
+                        <Ionicons name="person" size={22} color="#A4A4A4" />
+                      </View>
+
+                      <View style={styles.sharedHeaderTextBlock}>
+                        <Text
+                          style={styles.sharedName}
+                          allowFontScaling={false}
+                          numberOfLines={1}
+                        >
+                          {owner.name}
+                        </Text>
+
+                        {!!ownerUpdatedText && (
+                          <Text
+                            style={styles.sharedDateText}
+                            allowFontScaling={false}
+                            numberOfLines={1}
+                          >
+                            {ownerUpdatedText}
+                          </Text>
+                        )}
+                      </View>
                     </View>
 
-                    <Text
-                      style={styles.sharedName}
-                      allowFontScaling={false}
-                      numberOfLines={1}
-                    >
-                      {owner.name}
-                    </Text>
-                  </View>
+                    <View style={styles.sharedBottomRow}>
+                      <View style={styles.sharedTextBlock}>
+                        <Text style={styles.sharedFilesText} allowFontScaling={false}>
+                          Файлы: {owner.documents_count}
+                        </Text>
 
-                  <View style={styles.sharedBottomRow}>
-                    <View style={styles.sharedTextBlock}>
-                      <Text style={styles.sharedFilesText} allowFontScaling={false}>
-                        Файлы: {owner.documents_count}
-                      </Text>
+                        <Text
+                          style={styles.sharedLastText}
+                          allowFontScaling={false}
+                          numberOfLines={1}
+                        >
+                          {owner.last_document_title || 'Нет недавно добавленных'}
+                        </Text>
+                      </View>
 
-                      <Text
-                        style={styles.sharedLastText}
-                        allowFontScaling={false}
-                        numberOfLines={1}
-                      >
-                        {owner.last_document_title || 'Нет недавно добавленных'}
-                      </Text>
+                      <View style={styles.sharedArrow}>
+                        <Ionicons name="arrow-forward" size={28} color="#5F5F5F" />
+                      </View>
                     </View>
-
-                    <View style={styles.sharedArrow}>
-                      <Ionicons name="arrow-forward" size={28} color="#5F5F5F" />
-                    </View>
-                  </View>
-                </TouchableOpacity>
-              ))}
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           )}
         </ScrollView>
@@ -412,20 +524,24 @@ const styles = StyleSheet.create({
   },
 
   familyDate: {
+    maxWidth: 92,
     marginLeft: 8,
-    marginTop: 3,
-    fontFamily: fontFamily.regular,
-    fontSize: fontSize.bodyM,
+    marginTop: 4,
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.caption,
     color: '#FFFFFF',
-    opacity: 0.9,
+    opacity: 0.95,
+    textAlign: 'right',
   },
 
   personalDate: {
+    maxWidth: 92,
     marginLeft: 8,
-    marginTop: 3,
-    fontFamily: fontFamily.regular,
-    fontSize: fontSize.bodyM,
+    marginTop: 4,
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.caption,
     color: '#858585',
+    textAlign: 'right',
   },
 
   countRow: {
@@ -559,12 +675,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 
-  sharedName: {
+  sharedHeaderTextBlock: {
     flex: 1,
     marginLeft: 10,
+  },
+
+  sharedName: {
     fontFamily: fontFamily.regular,
     fontSize: fontSize.bodyL,
     color: '#262626',
+  },
+
+  sharedDateText: {
+    marginTop: 1,
+    fontFamily: fontFamily.regular,
+    fontSize: 11,
+    color: '#858585',
   },
 
   sharedBottomRow: {

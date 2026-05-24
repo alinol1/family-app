@@ -1,46 +1,58 @@
+from datetime import timedelta
 from decimal import Decimal, InvalidOperation
-from datetime import date
 
+from django.db import transaction
 from django.db.models import Sum
 from django.db.models.functions import Coalesce
+from django.utils import timezone
 
 from rest_framework import status
-from rest_framework.views import APIView
-from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
-from .models import Category, FinanceRecord, FamilyGoal
+from families.models import FamilyMember
+from users.models import User
+
+from .models import (
+    Category,
+    FinanceGoal,
+    FinanceGoalContribution,
+    FinanceRecord,
+    FinanceSpace,
+    FinanceSpaceMember,
+)
 from .serializers import (
     CategorySerializer,
+    FinanceGoalContributionSerializer,
+    FinanceGoalSerializer,
     FinanceRecordSerializer,
-    FamilyGoalSerializer,
+    FinanceSpaceSerializer,
+    get_user_avatar_url,
+    get_user_display_name,
+    get_user_initials,
 )
 
 
 DEFAULT_INCOME_CATEGORIES = [
     'Зарплата',
+    'Копилка',
     'Подарок',
-    'Подработка',
-    'Возврат',
+    'Перевод',
     'Другое',
 ]
 
 DEFAULT_EXPENSE_CATEGORIES = [
     'Продукты',
-    'Транспорт',
-    'Медицина',
+    'Автомобиль',
     'Дом',
-    'Развлечения',
-    'Образование',
-    'Копилка',
+    'Аптека',
+    'Транспорт',
     'Другое',
 ]
 
 
 def get_user_family(user):
-    """
-    Возвращает семью пользователя.
-    """
     if not hasattr(user, 'family_membership'):
         return None
 
@@ -48,40 +60,26 @@ def get_user_family(user):
 
 
 def parse_decimal(value):
-    """
-    Безопасно преобразует значение в Decimal.
-    """
     try:
         return Decimal(str(value).replace(',', '.'))
     except (InvalidOperation, TypeError, ValueError):
         return None
 
 
-def parse_record_date(value):
-    """
-    Безопасно преобразует дату.
-    Если дата не передана — возвращает сегодняшнюю дату.
-    """
+def parse_date(value):
     if not value:
-        return date.today()
-
-    if isinstance(value, date):
-        return value
+        return timezone.localdate()
 
     try:
-        return date.fromisoformat(str(value))
+        return timezone.datetime.strptime(value, '%Y-%m-%d').date()
     except (TypeError, ValueError):
         return None
 
 
-def ensure_default_categories(family, user):
-    """
-    Создаёт стандартные категории доходов и расходов,
-    если их ещё нет у семьи.
-    """
+def ensure_default_categories(finance_space, user):
     for title in DEFAULT_INCOME_CATEGORIES:
         Category.objects.get_or_create(
-            family=family,
+            finance_space=finance_space,
             type='income',
             title=title,
             defaults={
@@ -92,7 +90,7 @@ def ensure_default_categories(family, user):
 
     for title in DEFAULT_EXPENSE_CATEGORIES:
         Category.objects.get_or_create(
-            family=family,
+            finance_space=finance_space,
             type='expense',
             title=title,
             defaults={
@@ -102,27 +100,29 @@ def ensure_default_categories(family, user):
         )
 
 
-def get_or_create_category_by_title(family, user, record_type, title):
-    """
-    Получает категорию по названию или создаёт новую.
-    Это нужно, чтобы frontend мог отправлять category_title.
-    """
+def get_family_users(family):
+    return User.objects.filter(
+        family_membership__family=family
+    ).order_by('first_name', 'username')
+
+
+def get_or_create_category_by_title(finance_space, user, record_type, title):
     clean_title = str(title or '').strip()
 
     if not clean_title:
         return None
 
-    existing_category = Category.objects.filter(
-        family=family,
+    category = Category.objects.filter(
+        finance_space=finance_space,
         type=record_type,
         title__iexact=clean_title
     ).first()
 
-    if existing_category:
-        return existing_category
+    if category:
+        return category
 
     return Category.objects.create(
-        family=family,
+        finance_space=finance_space,
         type=record_type,
         title=clean_title,
         created_by=user,
@@ -130,84 +130,50 @@ def get_or_create_category_by_title(family, user, record_type, title):
     )
 
 
-def is_piggy_bank_record(record):
-    """
-    Проверяет, является ли операция расходом в категорию 'Копилка'.
-    """
-    if not record:
-        return False
+def get_space_for_user(request, space_id):
+    family = get_user_family(request.user)
 
-    if record.type != 'expense':
-        return False
+    if not family:
+        return None, Response(
+            {'error': 'Вы не состоите в семье'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
 
-    if not record.category:
-        return False
+    try:
+        finance_space = FinanceSpace.objects.prefetch_related(
+            'members',
+            'goals',
+            'categories',
+        ).get(
+            id=space_id,
+            family=family,
+            members=request.user,
+            is_archived=False,
+        )
+    except FinanceSpace.DoesNotExist:
+        return None, Response(
+            {'error': 'Финансовая ячейка не найдена или недоступна'},
+            status=status.HTTP_404_NOT_FOUND
+        )
 
-    return record.category.title.strip().lower() == 'копилка'
-
-
-def get_or_create_family_goal(family, user):
-    """
-    Возвращает финансовую цель семьи.
-    Если цели ещё нет — создаёт стандартную.
-    """
-    goal, created = FamilyGoal.objects.get_or_create(
-        family=family,
-        defaults={
-            'title': 'Семейная цель',
-            'current_amount': 0,
-            'target_amount': 100000,
-            'created_by': user,
-        }
-    )
-
-    return goal
+    return finance_space, None
 
 
-def apply_goal_delta(family, user, delta):
-    """
-    Изменяет накопленную сумму семейной цели.
-
-    delta > 0 — пополнение цели.
-    delta < 0 — уменьшение цели.
-    """
-    if delta == 0:
-        return None
-
-    goal = get_or_create_family_goal(family, user)
-
-    new_current_amount = goal.current_amount + delta
-
-    if new_current_amount < 0:
-        new_current_amount = Decimal('0')
-
-    goal.current_amount = new_current_amount
-    goal.save()
-
-    return goal
+def can_manage_space(user, finance_space):
+    return user == finance_space.created_by or user == finance_space.family.admin
 
 
-def get_piggy_bank_contribution(record):
-    """
-    Возвращает сумму, которая должна влиять на цель.
-    Если операция не относится к копилке — 0.
-    """
-    if is_piggy_bank_record(record):
-        return record.amount
+def build_user_payload(user, request):
+    return {
+        'id': user.id,
+        'name': get_user_display_name(user),
+        'initials': get_user_initials(user),
+        'avatar_url': get_user_avatar_url(user, request),
+        'is_current_user': user.id == request.user.id,
+    }
 
-    return Decimal('0')
 
-
-class CategoryListCreateView(APIView):
-    """
-    Категории финансов.
-
-    GET  /api/finance/categories/
-    GET  /api/finance/categories/?type=income
-    GET  /api/finance/categories/?type=expense
-    POST /api/finance/categories/
-    """
-
+class FinanceFamilyMembersView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -219,18 +185,44 @@ class CategoryListCreateView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        ensure_default_categories(family, request.user)
+        users = get_family_users(family)
 
-        category_type = request.query_params.get('type')
+        return Response([
+            build_user_payload(user, request)
+            for user in users
+        ])
 
-        categories = Category.objects.filter(family=family)
 
-        if category_type in ['income', 'expense']:
-            categories = categories.filter(type=category_type)
+class FinanceSpaceListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
 
-        serializer = CategorySerializer(categories, many=True)
+    def get(self, request):
+        family = get_user_family(request.user)
+
+        if not family:
+            return Response(
+                {'error': 'Вы не состоите в семье'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        spaces = FinanceSpace.objects.filter(
+            family=family,
+            members=request.user,
+            is_archived=False,
+        ).prefetch_related(
+            'members',
+            'goals',
+        ).order_by('-created_at')
+
+        serializer = FinanceSpaceSerializer(
+            spaces,
+            many=True,
+            context={'request': request}
+        )
+
         return Response(serializer.data)
 
+    @transaction.atomic
     def post(self, request):
         family = get_user_family(request.user)
 
@@ -239,6 +231,260 @@ class CategoryListCreateView(APIView):
                 {'error': 'Вы не состоите в семье'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        title = str(request.data.get('title', '')).strip()
+        space_type = request.data.get('type', 'joint')
+        member_ids = request.data.get('member_ids', [])
+
+        if not title:
+            return Response(
+                {'error': 'Название финансовой ячейки обязательно'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if space_type not in ['personal', 'joint', 'collection']:
+            return Response(
+                {'error': 'Некорректный тип финансовой ячейки'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not isinstance(member_ids, list):
+            member_ids = []
+
+        member_ids = set(member_ids)
+        member_ids.add(request.user.id)
+
+        family_user_ids = set(
+            get_family_users(family).values_list('id', flat=True)
+        )
+
+        invalid_member_ids = member_ids - family_user_ids
+
+        if invalid_member_ids:
+            return Response(
+                {'error': 'Один или несколько участников не состоят в вашей семье'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        finance_space = FinanceSpace.objects.create(
+            title=title,
+            type=space_type,
+            family=family,
+            created_by=request.user,
+        )
+
+        for user_id in member_ids:
+            FinanceSpaceMember.objects.create(
+                finance_space=finance_space,
+                user_id=user_id,
+                role='owner' if user_id == request.user.id else 'member',
+                added_by=request.user,
+            )
+
+        ensure_default_categories(finance_space, request.user)
+
+        serializer = FinanceSpaceSerializer(
+            finance_space,
+            context={'request': request}
+        )
+
+        return Response(
+            serializer.data,
+            status=status.HTTP_201_CREATED
+        )
+
+
+class FinanceSpaceDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, space_id):
+        finance_space, error_response = get_space_for_user(request, space_id)
+
+        if error_response:
+            return error_response
+
+        serializer = FinanceSpaceSerializer(
+            finance_space,
+            context={'request': request}
+        )
+
+        return Response(serializer.data)
+
+    def patch(self, request, space_id):
+        finance_space, error_response = get_space_for_user(request, space_id)
+
+        if error_response:
+            return error_response
+
+        if not can_manage_space(request.user, finance_space):
+            return Response(
+                {'error': 'Недостаточно прав для настройки этой ячейки'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        title = request.data.get('title')
+        space_type = request.data.get('type')
+
+        if title is not None:
+            clean_title = str(title).strip()
+
+            if not clean_title:
+                return Response(
+                    {'error': 'Название финансовой ячейки обязательно'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            finance_space.title = clean_title
+
+        if space_type is not None:
+            if space_type not in ['personal', 'joint', 'collection']:
+                return Response(
+                    {'error': 'Некорректный тип финансовой ячейки'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            finance_space.type = space_type
+
+        finance_space.save()
+
+        serializer = FinanceSpaceSerializer(
+            finance_space,
+            context={'request': request}
+        )
+
+        return Response(serializer.data)
+
+    def delete(self, request, space_id):
+        finance_space, error_response = get_space_for_user(request, space_id)
+
+        if error_response:
+            return error_response
+
+        if not can_manage_space(request.user, finance_space):
+            return Response(
+                {'error': 'Недостаточно прав для удаления этой ячейки'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        finance_space.is_archived = True
+        finance_space.save()
+
+        return Response({'message': 'Финансовая ячейка перенесена в архив'})
+
+
+class FinanceSpaceMembersView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, space_id):
+        finance_space, error_response = get_space_for_user(request, space_id)
+
+        if error_response:
+            return error_response
+
+        selected_ids = set(
+            finance_space.members.values_list('id', flat=True)
+        )
+
+        users = get_family_users(finance_space.family)
+
+        return Response([
+            {
+                **build_user_payload(user, request),
+                'is_selected': user.id in selected_ids,
+            }
+            for user in users
+        ])
+
+    @transaction.atomic
+    def put(self, request, space_id):
+        finance_space, error_response = get_space_for_user(request, space_id)
+
+        if error_response:
+            return error_response
+
+        if not can_manage_space(request.user, finance_space):
+            return Response(
+                {'error': 'Недостаточно прав для настройки участников'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        member_ids = request.data.get('member_ids', [])
+
+        if not isinstance(member_ids, list):
+            return Response(
+                {'error': 'member_ids должен быть списком'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        member_ids = set(member_ids)
+        member_ids.add(finance_space.created_by_id)
+
+        family_user_ids = set(
+            get_family_users(finance_space.family).values_list('id', flat=True)
+        )
+
+        invalid_member_ids = member_ids - family_user_ids
+
+        if invalid_member_ids:
+            return Response(
+                {'error': 'Один или несколько участников не состоят в вашей семье'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        FinanceSpaceMember.objects.filter(
+            finance_space=finance_space
+        ).exclude(
+            user_id__in=member_ids
+        ).delete()
+
+        existing_ids = set(
+            FinanceSpaceMember.objects.filter(
+                finance_space=finance_space
+            ).values_list('user_id', flat=True)
+        )
+
+        for user_id in member_ids - existing_ids:
+            FinanceSpaceMember.objects.create(
+                finance_space=finance_space,
+                user_id=user_id,
+                role='owner' if user_id == finance_space.created_by_id else 'member',
+                added_by=request.user,
+            )
+
+        serializer = FinanceSpaceSerializer(
+            finance_space,
+            context={'request': request}
+        )
+
+        return Response(serializer.data)
+
+
+class CategoryListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, space_id):
+        finance_space, error_response = get_space_for_user(request, space_id)
+
+        if error_response:
+            return error_response
+
+        ensure_default_categories(finance_space, request.user)
+
+        category_type = request.query_params.get('type')
+
+        categories = Category.objects.filter(finance_space=finance_space)
+
+        if category_type in ['income', 'expense']:
+            categories = categories.filter(type=category_type)
+
+        serializer = CategorySerializer(categories, many=True)
+        return Response(serializer.data)
+
+    def post(self, request, space_id):
+        finance_space, error_response = get_space_for_user(request, space_id)
+
+        if error_response:
+            return error_response
 
         title = str(request.data.get('title', '')).strip()
         category_type = request.data.get('type')
@@ -255,28 +501,23 @@ class CategoryListCreateView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        existing_category = Category.objects.filter(
-            family=family,
+        category, created = Category.objects.get_or_create(
+            finance_space=finance_space,
             type=category_type,
-            title__iexact=title
-        ).first()
+            title=title,
+            defaults={
+                'created_by': request.user,
+                'is_default': False,
+            }
+        )
 
-        if existing_category:
+        if not created:
             return Response(
                 {'error': 'Такая категория уже существует'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        category = Category.objects.create(
-            title=title,
-            type=category_type,
-            family=family,
-            created_by=request.user,
-            is_default=False,
-        )
-
         serializer = CategorySerializer(category)
-
         return Response(
             serializer.data,
             status=status.HTTP_201_CREATED
@@ -284,28 +525,18 @@ class CategoryListCreateView(APIView):
 
 
 class CategoryDetailView(APIView):
-    """
-    Редактирование и удаление категории.
-
-    PATCH  /api/finance/categories/<category_id>/
-    DELETE /api/finance/categories/<category_id>/
-    """
-
     permission_classes = [IsAuthenticated]
 
-    def get_category(self, request, category_id):
-        family = get_user_family(request.user)
+    def get_category(self, request, space_id, category_id):
+        finance_space, error_response = get_space_for_user(request, space_id)
 
-        if not family:
-            return None, Response(
-                {'error': 'Вы не состоите в семье'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        if error_response:
+            return None, error_response
 
         try:
             category = Category.objects.get(
                 id=category_id,
-                family=family
+                finance_space=finance_space
             )
         except Category.DoesNotExist:
             return None, Response(
@@ -315,13 +546,18 @@ class CategoryDetailView(APIView):
 
         return category, None
 
-    def patch(self, request, category_id):
-        category, error_response = self.get_category(request, category_id)
+    def patch(self, request, space_id, category_id):
+        category, error_response = self.get_category(
+            request,
+            space_id,
+            category_id
+        )
 
         if error_response:
             return error_response
 
-        title = str(request.data.get('title', '')).strip()
+        title = str(request.data.get('title', category.title)).strip()
+        category_type = request.data.get('type', category.type)
 
         if not title:
             return Response(
@@ -329,26 +565,26 @@ class CategoryDetailView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        duplicate = Category.objects.filter(
-            family=category.family,
-            type=category.type,
-            title__iexact=title
-        ).exclude(id=category.id).exists()
-
-        if duplicate:
+        if category_type not in ['income', 'expense']:
             return Response(
-                {'error': 'Такая категория уже существует'},
+                {'error': 'Некорректный тип категории'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         category.title = title
+        category.type = category_type
+        category.is_default = False
         category.save()
 
         serializer = CategorySerializer(category)
         return Response(serializer.data)
 
-    def delete(self, request, category_id):
-        category, error_response = self.get_category(request, category_id)
+    def delete(self, request, space_id, category_id):
+        category, error_response = self.get_category(
+            request,
+            space_id,
+            category_id
+        )
 
         if error_response:
             return error_response
@@ -361,61 +597,49 @@ class CategoryDetailView(APIView):
 
         category.delete()
 
-        return Response(
-            {'message': 'Категория удалена'},
-            status=status.HTTP_200_OK
-        )
+        return Response({'message': 'Категория удалена'})
 
 
 class FinanceRecordListCreateView(APIView):
-    """
-    Список финансовых операций и создание операции.
-
-    GET  /api/finance/records/
-    POST /api/finance/records/
-    """
-
     permission_classes = [IsAuthenticated]
 
-    def get(self, request):
-        family = get_user_family(request.user)
+    def get(self, request, space_id):
+        finance_space, error_response = get_space_for_user(request, space_id)
 
-        if not family:
-            return Response(
-                {'error': 'Вы не состоите в семье'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        if error_response:
+            return error_response
 
         record_type = request.query_params.get('type')
 
         records = FinanceRecord.objects.filter(
-            family=family
+            finance_space=finance_space
         ).select_related(
             'category',
             'created_by'
-        ).order_by('-date', '-created_at')
+        )
 
         if record_type in ['income', 'expense']:
             records = records.filter(type=record_type)
 
-        serializer = FinanceRecordSerializer(records, many=True)
+        serializer = FinanceRecordSerializer(
+            records,
+            many=True,
+            context={'request': request}
+        )
+
         return Response(serializer.data)
 
-    def post(self, request):
-        family = get_user_family(request.user)
+    def post(self, request, space_id):
+        finance_space, error_response = get_space_for_user(request, space_id)
 
-        if not family:
-            return Response(
-                {'error': 'Вы не состоите в семье'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        ensure_default_categories(family, request.user)
+        if error_response:
+            return error_response
 
         record_type = request.data.get('type')
         amount = parse_decimal(request.data.get('amount'))
+        title = str(request.data.get('title', '')).strip()
         description = str(request.data.get('description', '')).strip()
-        record_date = parse_record_date(request.data.get('date'))
+        record_date = parse_date(request.data.get('date'))
 
         if record_type not in ['income', 'expense']:
             return Response(
@@ -436,7 +660,6 @@ class FinanceRecordListCreateView(APIView):
             )
 
         category = None
-
         category_id = request.data.get('category')
         category_title = request.data.get('category_title')
 
@@ -444,7 +667,7 @@ class FinanceRecordListCreateView(APIView):
             try:
                 category = Category.objects.get(
                     id=category_id,
-                    family=family,
+                    finance_space=finance_space,
                     type=record_type
                 )
             except Category.DoesNotExist:
@@ -452,33 +675,32 @@ class FinanceRecordListCreateView(APIView):
                     {'error': 'Категория не найдена'},
                     status=status.HTTP_404_NOT_FOUND
                 )
-
         elif category_title:
             category = get_or_create_category_by_title(
-                family=family,
+                finance_space=finance_space,
                 user=request.user,
                 record_type=record_type,
                 title=category_title
             )
 
+        if not title:
+            title = category.title if category else 'Операция'
+
         record = FinanceRecord.objects.create(
+            title=title,
             type=record_type,
             amount=amount,
             category=category,
             description=description,
             date=record_date,
-            family=family,
+            finance_space=finance_space,
             created_by=request.user,
         )
 
-        if is_piggy_bank_record(record):
-            apply_goal_delta(
-                family=family,
-                user=request.user,
-                delta=record.amount
-            )
-
-        serializer = FinanceRecordSerializer(record)
+        serializer = FinanceRecordSerializer(
+            record,
+            context={'request': request}
+        )
 
         return Response(
             serializer.data,
@@ -487,33 +709,21 @@ class FinanceRecordListCreateView(APIView):
 
 
 class FinanceRecordDetailView(APIView):
-    """
-    Просмотр, редактирование и удаление операции.
-
-    GET    /api/finance/records/<record_id>/
-    PATCH  /api/finance/records/<record_id>/
-    DELETE /api/finance/records/<record_id>/
-    """
-
     permission_classes = [IsAuthenticated]
 
-    def get_record(self, request, record_id):
-        family = get_user_family(request.user)
+    def get_record(self, request, space_id, record_id):
+        finance_space, error_response = get_space_for_user(request, space_id)
 
-        if not family:
-            return None, Response(
-                {'error': 'Вы не состоите в семье'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        if error_response:
+            return None, error_response
 
         try:
             record = FinanceRecord.objects.select_related(
                 'category',
-                'family',
                 'created_by'
             ).get(
                 id=record_id,
-                family=family
+                finance_space=finance_space
             )
         except FinanceRecord.DoesNotExist:
             return None, Response(
@@ -523,23 +733,32 @@ class FinanceRecordDetailView(APIView):
 
         return record, None
 
-    def get(self, request, record_id):
-        record, error_response = self.get_record(request, record_id)
+    def get(self, request, space_id, record_id):
+        record, error_response = self.get_record(
+            request,
+            space_id,
+            record_id
+        )
 
         if error_response:
             return error_response
 
-        serializer = FinanceRecordSerializer(record)
+        serializer = FinanceRecordSerializer(
+            record,
+            context={'request': request}
+        )
+
         return Response(serializer.data)
 
-    def patch(self, request, record_id):
-        record, error_response = self.get_record(request, record_id)
+    def patch(self, request, space_id, record_id):
+        record, error_response = self.get_record(
+            request,
+            space_id,
+            record_id
+        )
 
         if error_response:
             return error_response
-
-        old_contribution = get_piggy_bank_contribution(record)
-        type_changed = False
 
         if 'type' in request.data:
             record_type = request.data.get('type')
@@ -549,9 +768,6 @@ class FinanceRecordDetailView(APIView):
                     {'error': 'Некорректный тип операции'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-
-            if record.type != record_type:
-                type_changed = True
 
             record.type = record_type
 
@@ -566,13 +782,16 @@ class FinanceRecordDetailView(APIView):
 
             record.amount = amount
 
+        if 'title' in request.data:
+            record.title = str(request.data.get('title', '')).strip()
+
         if 'description' in request.data:
             record.description = str(
                 request.data.get('description', '')
             ).strip()
 
         if 'date' in request.data:
-            record_date = parse_record_date(request.data.get('date'))
+            record_date = parse_date(request.data.get('date'))
 
             if record_date is None:
                 return Response(
@@ -589,7 +808,7 @@ class FinanceRecordDetailView(APIView):
                 try:
                     category = Category.objects.get(
                         id=category_id,
-                        family=record.family,
+                        finance_space=record.finance_space,
                         type=record.type
                     )
                 except Category.DoesNotExist:
@@ -602,110 +821,83 @@ class FinanceRecordDetailView(APIView):
             else:
                 record.category = None
 
-        elif 'category_title' in request.data:
+        if 'category_title' in request.data:
             category_title = request.data.get('category_title')
 
             if category_title:
                 category = get_or_create_category_by_title(
-                    family=record.family,
+                    finance_space=record.finance_space,
                     user=request.user,
                     record_type=record.type,
                     title=category_title
                 )
 
                 record.category = category
-            else:
-                record.category = None
-
-        elif type_changed and record.category and record.category.type != record.type:
-            record.category = None
 
         record.save()
 
-        new_contribution = get_piggy_bank_contribution(record)
-        contribution_delta = new_contribution - old_contribution
+        serializer = FinanceRecordSerializer(
+            record,
+            context={'request': request}
+        )
 
-        if contribution_delta != 0:
-            apply_goal_delta(
-                family=record.family,
-                user=request.user,
-                delta=contribution_delta
-            )
-
-        serializer = FinanceRecordSerializer(record)
         return Response(serializer.data)
 
-    def delete(self, request, record_id):
-        record, error_response = self.get_record(request, record_id)
+    def delete(self, request, space_id, record_id):
+        record, error_response = self.get_record(
+            request,
+            space_id,
+            record_id
+        )
 
         if error_response:
             return error_response
 
-        contribution = get_piggy_bank_contribution(record)
-
-        if contribution > 0:
-            apply_goal_delta(
-                family=record.family,
-                user=request.user,
-                delta=-contribution
-            )
-
         record.delete()
 
-        return Response(
-            {'message': 'Операция удалена'},
-            status=status.HTTP_200_OK
-        )
+        return Response({'message': 'Операция удалена'})
 
 
-class FamilyGoalView(APIView):
-    """
-    Семейная финансовая цель.
-
-    GET   /api/finance/goal/
-    PATCH /api/finance/goal/
-    """
-
+class FinanceGoalListCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get(self, request):
-        family = get_user_family(request.user)
+    def get(self, request, space_id):
+        finance_space, error_response = get_space_for_user(request, space_id)
 
-        if not family:
-            return Response(
-                {'error': 'Вы не состоите в семье'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        if error_response:
+            return error_response
 
-        goal = get_or_create_family_goal(
-            family=family,
-            user=request.user
+        status_filter = request.query_params.get('status')
+
+        goals = FinanceGoal.objects.filter(
+            finance_space=finance_space
+        ).prefetch_related(
+            'members',
+            'contributions',
         )
 
-        serializer = FamilyGoalSerializer(goal)
+        if status_filter in ['active', 'completed']:
+            goals = goals.filter(status=status_filter)
+
+        serializer = FinanceGoalSerializer(
+            goals,
+            many=True,
+            context={'request': request}
+        )
+
         return Response(serializer.data)
 
-    def patch(self, request):
-        family = get_user_family(request.user)
+    def post(self, request, space_id):
+        finance_space, error_response = get_space_for_user(request, space_id)
 
-        if not family:
-            return Response(
-                {'error': 'Вы не состоите в семье'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        if error_response:
+            return error_response
 
-        goal = get_or_create_family_goal(
-            family=family,
-            user=request.user
-        )
-
-        title = str(request.data.get('title', goal.title)).strip()
-        current_amount = parse_decimal(
-            request.data.get('current_amount', goal.current_amount)
-        )
-        target_amount = parse_decimal(
-            request.data.get('target_amount', goal.target_amount)
-        )
+        title = str(request.data.get('title', '')).strip()
+        description = str(request.data.get('description', '')).strip()
+        scope = request.data.get('scope', 'personal')
+        target_amount = parse_decimal(request.data.get('target_amount'))
+        member_ids = request.data.get('member_ids', [])
 
         if not title:
             return Response(
@@ -713,135 +905,521 @@ class FamilyGoalView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        if current_amount is None or current_amount < 0:
+        if scope not in ['personal', 'family']:
             return Response(
-                {'error': 'Некорректная накопленная сумма'},
+                {'error': 'Некорректный тип цели'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         if target_amount is None or target_amount <= 0:
             return Response(
-                {'error': 'Некорректная целевая сумма'},
+                {'error': 'Введите корректную сумму цели'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        goal.title = title
-        goal.current_amount = current_amount
-        goal.target_amount = target_amount
+        goal = FinanceGoal.objects.create(
+            title=title,
+            description=description,
+            scope=scope,
+            target_amount=target_amount,
+            current_amount=0,
+            finance_space=finance_space,
+            created_by=request.user,
+        )
+
+        if scope == 'personal':
+            goal.members.set([request.user])
+        else:
+            if not isinstance(member_ids, list) or not member_ids:
+                member_ids = list(
+                    finance_space.members.values_list('id', flat=True)
+                )
+
+            allowed_ids = set(
+                finance_space.members.values_list('id', flat=True)
+            )
+
+            member_ids = set(member_ids)
+
+            if member_ids - allowed_ids:
+                goal.delete()
+                return Response(
+                    {'error': 'Участник цели должен иметь доступ к финансовой ячейке'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            goal.members.set(member_ids)
+
+        serializer = FinanceGoalSerializer(
+            goal,
+            context={'request': request}
+        )
+
+        return Response(
+            serializer.data,
+            status=status.HTTP_201_CREATED
+        )
+
+
+class FinanceGoalDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_goal(self, request, space_id, goal_id):
+        finance_space, error_response = get_space_for_user(request, space_id)
+
+        if error_response:
+            return None, error_response
+
+        try:
+            goal = FinanceGoal.objects.prefetch_related(
+                'members',
+                'contributions',
+            ).get(
+                id=goal_id,
+                finance_space=finance_space
+            )
+        except FinanceGoal.DoesNotExist:
+            return None, Response(
+                {'error': 'Цель не найдена'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        return goal, None
+
+    def get(self, request, space_id, goal_id):
+        goal, error_response = self.get_goal(
+            request,
+            space_id,
+            goal_id
+        )
+
+        if error_response:
+            return error_response
+
+        serializer = FinanceGoalSerializer(
+            goal,
+            context={'request': request}
+        )
+
+        return Response(serializer.data)
+
+    def patch(self, request, space_id, goal_id):
+        goal, error_response = self.get_goal(
+            request,
+            space_id,
+            goal_id
+        )
+
+        if error_response:
+            return error_response
+
+        if 'title' in request.data:
+            title = str(request.data.get('title', '')).strip()
+
+            if not title:
+                return Response(
+                    {'error': 'Название цели обязательно'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            goal.title = title
+
+        if 'description' in request.data:
+            goal.description = str(
+                request.data.get('description', '')
+            ).strip()
+
+        if 'scope' in request.data:
+            scope = request.data.get('scope')
+
+            if scope not in ['personal', 'family']:
+                return Response(
+                    {'error': 'Некорректный тип цели'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            goal.scope = scope
+
+        if 'target_amount' in request.data:
+            target_amount = parse_decimal(
+                request.data.get('target_amount')
+            )
+
+            if target_amount is None or target_amount <= 0:
+                return Response(
+                    {'error': 'Введите корректную сумму цели'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            goal.target_amount = target_amount
+
+        if 'current_amount' in request.data:
+            current_amount = parse_decimal(
+                request.data.get('current_amount')
+            )
+
+            if current_amount is None or current_amount < 0:
+                return Response(
+                    {'error': 'Введите корректную накопленную сумму'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            goal.current_amount = current_amount
+
         goal.save()
 
-        serializer = FamilyGoalSerializer(goal)
+        if 'member_ids' in request.data:
+            member_ids = request.data.get('member_ids', [])
+
+            if goal.scope == 'personal':
+                goal.members.set([request.user])
+            else:
+                if not isinstance(member_ids, list):
+                    return Response(
+                        {'error': 'member_ids должен быть списком'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                allowed_ids = set(
+                    goal.finance_space.members.values_list('id', flat=True)
+                )
+
+                member_ids = set(member_ids)
+
+                if member_ids - allowed_ids:
+                    return Response(
+                        {'error': 'Участник цели должен иметь доступ к финансовой ячейке'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                goal.members.set(member_ids)
+
+        serializer = FinanceGoalSerializer(
+            goal,
+            context={'request': request}
+        )
+
+        return Response(serializer.data)
+
+    def delete(self, request, space_id, goal_id):
+        goal, error_response = self.get_goal(
+            request,
+            space_id,
+            goal_id
+        )
+
+        if error_response:
+            return error_response
+
+        goal.delete()
+
+        return Response({'message': 'Цель удалена'})
+
+
+class FinanceGoalCompleteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, space_id, goal_id):
+        finance_space, error_response = get_space_for_user(request, space_id)
+
+        if error_response:
+            return error_response
+
+        try:
+            goal = FinanceGoal.objects.get(
+                id=goal_id,
+                finance_space=finance_space
+            )
+        except FinanceGoal.DoesNotExist:
+            return Response(
+                {'error': 'Цель не найдена'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if goal.current_amount < goal.target_amount:
+            return Response(
+                {'error': 'Цель ещё не достигла 100%'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        goal.status = 'completed'
+        goal.completed_at = timezone.now()
+        goal.save()
+
+        serializer = FinanceGoalSerializer(
+            goal,
+            context={'request': request}
+        )
+
         return Response(serializer.data)
 
 
-class FinanceSummaryView(APIView):
-    """
-    Общая финансовая сводка.
-
-    GET /api/finance/summary/
-    """
-
+class FinanceGoalContributionListCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get(self, request):
-        family = get_user_family(request.user)
+    def get(self, request, space_id, goal_id):
+        finance_space, error_response = get_space_for_user(request, space_id)
 
-        if not family:
+        if error_response:
+            return error_response
+
+        try:
+            goal = FinanceGoal.objects.get(
+                id=goal_id,
+                finance_space=finance_space
+            )
+        except FinanceGoal.DoesNotExist:
             return Response(
-                {'error': 'Вы не состоите в семье'},
+                {'error': 'Цель не найдена'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        contributions = FinanceGoalContribution.objects.filter(goal=goal)
+
+        serializer = FinanceGoalContributionSerializer(
+            contributions,
+            many=True,
+            context={'request': request}
+        )
+
+        return Response(serializer.data)
+
+    @transaction.atomic
+    def post(self, request, space_id, goal_id):
+        finance_space, error_response = get_space_for_user(request, space_id)
+
+        if error_response:
+            return error_response
+
+        try:
+            goal = FinanceGoal.objects.select_for_update().get(
+                id=goal_id,
+                finance_space=finance_space
+            )
+        except FinanceGoal.DoesNotExist:
+            return Response(
+                {'error': 'Цель не найдена'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if goal.status == 'completed':
+            return Response(
+                {'error': 'Выполненную цель нельзя пополнять'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        income = FinanceRecord.objects.filter(
-            family=family,
-            type='income'
-        ).aggregate(
-            total=Coalesce(Sum('amount'), Decimal('0'))
-        )['total']
+        amount = parse_decimal(request.data.get('amount'))
+        comment = str(request.data.get('comment', '')).strip()
 
-        expense = FinanceRecord.objects.filter(
-            family=family,
-            type='expense'
-        ).aggregate(
-            total=Coalesce(Sum('amount'), Decimal('0'))
-        )['total']
+        if amount is None or amount <= 0:
+            return Response(
+                {'error': 'Введите корректную сумму пополнения'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-        balance = income - expense
+        contribution = FinanceGoalContribution.objects.create(
+            goal=goal,
+            amount=amount,
+            comment=comment,
+            created_by=request.user,
+        )
+
+        goal.current_amount += amount
+        goal.save()
+
+        return Response(
+            {
+                'goal': FinanceGoalSerializer(
+                    goal,
+                    context={'request': request}
+                ).data,
+                'contribution': FinanceGoalContributionSerializer(
+                    contribution,
+                    context={'request': request}
+                ).data,
+            },
+            status=status.HTTP_201_CREATED
+        )
+
+
+class FinanceSpaceSummaryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, space_id):
+        finance_space, error_response = get_space_for_user(request, space_id)
+
+        if error_response:
+            return error_response
 
         return Response({
-            'income': income,
-            'expense': expense,
-            'balance': balance,
+            'income': finance_space.income_total,
+            'expense': finance_space.expense_total,
+            'balance': finance_space.balance,
+            'active_goals_count': finance_space.goals.filter(status='active').count(),
+            'completed_goals_count': finance_space.goals.filter(status='completed').count(),
         })
 
 
-class FinanceStatisticsView(APIView):
-    """
-    Статистика по финансам.
-
-    GET /api/finance/statistics/
-    """
-
+class FinanceSpaceStatisticsView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get(self, request):
-        family = get_user_family(request.user)
+    def get(self, request, space_id):
+        finance_space, error_response = get_space_for_user(request, space_id)
 
-        if not family:
-            return Response(
-                {'error': 'Вы не состоите в семье'},
-                status=status.HTTP_400_BAD_REQUEST
+        if error_response:
+            return error_response
+
+        records = FinanceRecord.objects.filter(
+            finance_space=finance_space
+        ).select_related(
+            'category',
+            'created_by'
+        )
+
+        income_records = records.filter(type='income')
+        expense_records = records.filter(type='expense')
+
+        total_income = income_records.aggregate(
+            total=Coalesce(Sum('amount'), Decimal('0'))
+        )['total']
+
+        total_expense = expense_records.aggregate(
+            total=Coalesce(Sum('amount'), Decimal('0'))
+        )['total']
+
+        net_amount = total_income - total_expense
+
+        expense_load_percent = 0
+        saving_percent = 0
+
+        if total_income > 0:
+            expense_load_percent = min(
+                round((total_expense / total_income) * 100),
+                100
+            )
+            saving_percent = max(
+                round((net_amount / total_income) * 100),
+                0
             )
 
-        income = FinanceRecord.objects.filter(
-            family=family,
-            type='income'
-        ).aggregate(
-            total=Coalesce(Sum('amount'), Decimal('0'))
+        income_count = income_records.count()
+        expense_count = expense_records.count()
+
+        average_income = total_income / income_count if income_count else Decimal('0')
+        average_expense = total_expense / expense_count if expense_count else Decimal('0')
+
+        income_categories = {}
+        expense_categories = {}
+        actors = {}
+
+        for record in records:
+            category_title = record.category.title if record.category else 'Без категории'
+
+            if record.type == 'income':
+                income_categories[category_title] = (
+                    income_categories.get(category_title, Decimal('0')) + record.amount
+                )
+            else:
+                expense_categories[category_title] = (
+                    expense_categories.get(category_title, Decimal('0')) + record.amount
+                )
+
+            actor_key = record.created_by_id
+
+            if actor_key not in actors:
+                actors[actor_key] = {
+                    'id': record.created_by.id,
+                    'name': get_user_display_name(record.created_by),
+                    'initials': get_user_initials(record.created_by),
+                    'income': Decimal('0'),
+                    'expense': Decimal('0'),
+                }
+
+            actors[actor_key][record.type] += record.amount
+
+        def build_category_stats(items, total):
+            result = []
+
+            for title, amount in items.items():
+                percent = round((amount / total) * 100) if total > 0 else 0
+
+                result.append({
+                    'title': title,
+                    'amount': amount,
+                    'percent': percent,
+                })
+
+            return sorted(
+                result,
+                key=lambda item: item['amount'],
+                reverse=True
+            )
+
+        today = timezone.localdate()
+        start_date = today - timedelta(days=27)
+
+        period_stats = [
+            {'label': '1 нед', 'income': Decimal('0'), 'expense': Decimal('0')},
+            {'label': '2 нед', 'income': Decimal('0'), 'expense': Decimal('0')},
+            {'label': '3 нед', 'income': Decimal('0'), 'expense': Decimal('0')},
+            {'label': '4 нед', 'income': Decimal('0'), 'expense': Decimal('0')},
+        ]
+
+        for record in records.filter(date__gte=start_date):
+            day_index = (record.date - start_date).days
+            period_index = min(day_index // 7, 3)
+
+            period_stats[period_index][record.type] += record.amount
+
+        active_goals = finance_space.goals.filter(status='active')
+
+        goals_current_amount = active_goals.aggregate(
+            total=Coalesce(Sum('current_amount'), Decimal('0'))
         )['total']
 
-        expense = FinanceRecord.objects.filter(
-            family=family,
-            type='expense'
-        ).aggregate(
-            total=Coalesce(Sum('amount'), Decimal('0'))
+        goals_target_amount = active_goals.aggregate(
+            total=Coalesce(Sum('target_amount'), Decimal('0'))
         )['total']
 
-        expense_by_category_raw = FinanceRecord.objects.filter(
-            family=family,
-            type='expense'
-        ).values(
-            'category__title'
-        ).annotate(
-            total=Coalesce(Sum('amount'), Decimal('0'))
-        ).order_by('-total')
+        goals_progress_percent = 0
 
-        expense_by_category = []
+        if goals_target_amount > 0:
+            goals_progress_percent = min(
+                round((goals_current_amount / goals_target_amount) * 100),
+                100
+            )
 
-        for item in expense_by_category_raw:
-            category_title = item['category__title'] or 'Без категории'
-            total = item['total']
-            percent = Decimal('0')
-
-            if expense > 0:
-                percent = round((total / expense) * 100, 2)
-
-            expense_by_category.append({
-                'category': category_title,
-                'amount': total,
-                'percent': percent,
-            })
-
-        top_category = expense_by_category[0] if expense_by_category else None
-
-        goal = FamilyGoal.objects.filter(family=family).first()
-        goal_data = FamilyGoalSerializer(goal).data if goal else None
+        largest_expense = expense_records.order_by('-amount').first()
 
         return Response({
-            'income': income,
-            'expense': expense,
-            'balance': income - expense,
-            'expense_by_category': expense_by_category,
-            'top_expense_category': top_category,
-            'goal': goal_data,
+            'total_income': total_income,
+            'total_expense': total_expense,
+            'net_amount': net_amount,
+            'income_operations_count': income_count,
+            'expense_operations_count': expense_count,
+            'expense_load_percent': expense_load_percent,
+            'saving_percent': saving_percent,
+            'average_income': average_income,
+            'average_expense': average_expense,
+            'income_category_stats': build_category_stats(
+                income_categories,
+                total_income
+            ),
+            'expense_category_stats': build_category_stats(
+                expense_categories,
+                total_expense
+            ),
+            'actor_stats': sorted(
+                actors.values(),
+                key=lambda item: item['income'] + item['expense'],
+                reverse=True
+            ),
+            'period_stats': period_stats,
+            'goals_current_amount': goals_current_amount,
+            'goals_target_amount': goals_target_amount,
+            'goals_progress_percent': goals_progress_percent,
+            'largest_expense': FinanceRecordSerializer(
+                largest_expense,
+                context={'request': request}
+            ).data if largest_expense else None,
         })

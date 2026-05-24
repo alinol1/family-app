@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   Modal,
   Pressable,
   Alert,
+  ActivityIndicator,
   LayoutAnimation,
   Platform,
   UIManager,
@@ -18,9 +19,26 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 
 import { fontFamily, fontSize } from '../../utils/fonts';
 import { useLayout } from '../../utils/useLayout';
+
+import {
+  getFinanceFamilyMembers,
+  getFinanceSpaces,
+  createFinanceSpace,
+  getFinanceRecords,
+  getFinanceCategories,
+  getFinanceGoals,
+  getFinanceStatistics,
+  createFinanceRecord,
+  createFinanceCategory,
+  createFinanceGoal,
+  completeFinanceGoal,
+  getFinanceSpaceMembers,
+  updateFinanceSpaceMembers,
+} from '../../api/finance';
 
 if (
   Platform.OS === 'android' &&
@@ -31,325 +49,175 @@ if (
 
 const MAIN_COLOR = '#9456FE';
 
-const INITIAL_OPERATION_CATEGORIES = {
-  income: ['Зарплата', 'Копилка', 'Подарок', 'Перевод', 'Другое'],
-  expense: ['Продукты', 'Автомобиль', 'Дом', 'Аптека', 'Транспорт', 'Другое'],
+const DEFAULT_STATS = {
+  totalIncome: 0,
+  totalExpense: 0,
+  netAmount: 0,
+  incomeOperationsCount: 0,
+  expenseOperationsCount: 0,
+  expenseLoadPercent: 0,
+  savingPercent: 0,
+  averageIncome: 0,
+  averageExpense: 0,
+  incomeCategoryStats: [],
+  expenseCategoryStats: [],
+  actorStats: [],
+  periodStats: [
+    { label: '1 нед', income: 0, expense: 0 },
+    { label: '2 нед', income: 0, expense: 0 },
+    { label: '3 нед', income: 0, expense: 0 },
+    { label: '4 нед', income: 0, expense: 0 },
+  ],
+  periodMaxValue: 1,
+  goalsCurrentAmount: 0,
+  goalsTargetAmount: 0,
+  goalsProgressPercent: 0,
+  largestExpense: null,
 };
 
-const CURRENT_USER = {
-  name: 'Вы',
-  initials: 'Я',
-  color: '#F3ECFF',
+const getErrorMessage = (error, fallback = 'Произошла ошибка') => {
+  return (
+    error?.response?.data?.error ||
+    error?.response?.data?.detail ||
+    fallback
+  );
 };
 
-const FAMILY_MEMBERS = [
-  {
-    id: 1,
-    name: 'Вы',
-    initials: 'Я',
-    color: '#F3ECFF',
-  },
-  {
-    id: 2,
-    name: 'Мама',
-    initials: 'М',
-    color: '#EDE3FF',
-  },
-  {
-    id: 3,
-    name: 'Папа',
-    initials: 'П',
-    color: '#E8F0FF',
-  },
-  {
-    id: 4,
-    name: 'Анна',
-    initials: 'А',
-    color: '#FFE9DD',
-  },
-  {
-    id: 5,
-    name: 'Бабушка',
-    initials: 'Б',
-    color: '#DDF8EF',
-  },
-];
+const toNumber = (value) => Number(value || 0);
 
-const PERIOD_LABELS = ['1 нед', '2 нед', '3 нед', '4 нед'];
+const normalizeMember = (member) => ({
+  id: member.id,
+  name: member.name || member.username || 'Участник',
+  initials: member.initials || (member.name || 'У').charAt(0).toUpperCase(),
+  avatarUrl: member.avatar_url || null,
+  isCurrentUser: Boolean(member.is_current_user),
+  isSelected: Boolean(member.is_selected),
+  color: member.is_current_user ? '#F3ECFF' : '#EDE3FF',
+});
 
-const getOperationPeriodIndex = (subtitle = '') => {
-  const text = String(subtitle);
+const normalizeSpace = (space) => ({
+  id: space.id,
+  title: space.title,
+  type: space.type,
+  typeTitle: space.type_display || 'Финансовая ячейка',
+  subtitle: space.access_text || space.type_display || 'Финансовая ячейка',
+  color: MAIN_COLOR,
+  balance: toNumber(space.balance),
+  income: toNumber(space.income),
+  expense: toNumber(space.expense),
+  members: (space.members || []).map(normalizeMember),
+  membersCount: space.members_count || 0,
+  accessText: space.access_text || '',
+  goalsCount: space.goals_count || 0,
+  completedGoalsCount: space.completed_goals_count || 0,
+});
 
-  if (text.includes('Только что') || text.includes('Сегодня')) {
-    return 3;
-  }
+const normalizeCategory = (category) => ({
+  id: category.id,
+  title: category.title,
+  type: category.type,
+  isDefault: Boolean(category.is_default),
+});
 
-  const match = text.match(/(\d{1,2})\s+мая/);
+const normalizeRecord = (record) => ({
+  id: record.id,
+  title: record.title || record.category_title || 'Операция',
+  subtitle: record.subtitle || record.created_by_name || '',
+  amount: toNumber(record.amount),
+  type: record.type,
+  category: record.category,
+  categoryTitle: record.category_title || 'Без категории',
+  actorName: record.created_by_name || 'Участник',
+  actorInitials: record.actor_initials || 'У',
+  actorAvatarUrl: record.actor_avatar_url || null,
+  actorColor: '#F3ECFF',
+});
 
-  if (!match) {
-    return 3;
-  }
+const normalizeGoal = (goal) => ({
+  id: goal.id,
+  title: goal.title,
+  description: goal.description || '',
+  scope: goal.scope,
+  scopeTitle: goal.scope_display || (goal.scope === 'family' ? 'Общая цель' : 'Личная цель'),
+  currentAmount: toNumber(goal.current_amount),
+  targetAmount: toNumber(goal.target_amount),
+  progressPercent: toNumber(goal.progress_percent),
+  isReadyToComplete: Boolean(goal.is_ready_to_complete),
+  status: goal.status,
+  completedAt: goal.completed_at,
+  members: (goal.members || []).map(normalizeMember),
+  color: MAIN_COLOR,
+});
 
-  const day = Number(match[1]);
+const normalizeStats = (data) => {
+  const periodStats = (data?.period_stats || DEFAULT_STATS.periodStats).map((item) => ({
+    label: item.label,
+    income: toNumber(item.income),
+    expense: toNumber(item.expense),
+  }));
 
-  if (day <= 7) {
-    return 0;
-  }
+  const periodMaxValue = Math.max(
+    ...periodStats.map((item) => Math.max(item.income, item.expense)),
+    1
+  );
 
-  if (day <= 14) {
-    return 1;
-  }
-
-  if (day <= 21) {
-    return 2;
-  }
-
-  return 3;
+  return {
+    totalIncome: toNumber(data?.total_income),
+    totalExpense: toNumber(data?.total_expense),
+    netAmount: toNumber(data?.net_amount),
+    incomeOperationsCount: data?.income_operations_count || 0,
+    expenseOperationsCount: data?.expense_operations_count || 0,
+    expenseLoadPercent: data?.expense_load_percent || 0,
+    savingPercent: data?.saving_percent || 0,
+    averageIncome: toNumber(data?.average_income),
+    averageExpense: toNumber(data?.average_expense),
+    incomeCategoryStats: (data?.income_category_stats || []).map((item) => ({
+      title: item.title,
+      amount: toNumber(item.amount),
+      percent: item.percent || 0,
+    })),
+    expenseCategoryStats: (data?.expense_category_stats || []).map((item) => ({
+      title: item.title,
+      amount: toNumber(item.amount),
+      percent: item.percent || 0,
+    })),
+    actorStats: (data?.actor_stats || []).map((item) => ({
+      id: item.id,
+      name: item.name,
+      initials: item.initials,
+      income: toNumber(item.income),
+      expense: toNumber(item.expense),
+      color: '#F3ECFF',
+    })),
+    periodStats,
+    periodMaxValue,
+    goalsCurrentAmount: toNumber(data?.goals_current_amount),
+    goalsTargetAmount: toNumber(data?.goals_target_amount),
+    goalsProgressPercent: data?.goals_progress_percent || 0,
+    largestExpense: data?.largest_expense ? normalizeRecord(data.largest_expense) : null,
+  };
 };
-
-const INITIAL_FINANCE_SPACES = [
-  {
-    id: 1,
-    title: 'Наш бюджет',
-    type: 'joint',
-    typeTitle: 'Совместный',
-    subtitle: 'Мама + Папа',
-    color: MAIN_COLOR,
-    icon: 'wallet-outline',
-    balance: 52067.32,
-    income: 89999,
-    expense: 37931.68,
-    members: ['Вы', 'Мама', 'Папа'],
-    membersCount: 3,
-    accessText: 'Вы + Мама + Папа',
-    section: 'mine',
-    completedGoals: [],
-    goals: [
-      {
-        id: 1,
-        title: 'Купить машину',
-        description:
-          'Личная цель внутри финансового раздела. Деньги откладываются постепенно из общего бюджета.',
-        scope: 'personal',
-        scopeTitle: 'Личная цель',
-        members: ['Вы'],
-        currentAmount: 344556,
-        targetAmount: 344556,
-        color: MAIN_COLOR,
-      },
-      {
-        id: 2,
-        title: 'Ремонт кухни',
-        description:
-          'Общая семейная цель. К ней можно добавлять участников семьи и отслеживать общий прогресс.',
-        scope: 'family',
-        scopeTitle: 'Общая цель',
-        members: ['Мама', 'Папа'],
-        currentAmount: 19000,
-        targetAmount: 120000,
-        color: MAIN_COLOR,
-      },
-    ],
-    operations: [
-      {
-        id: 1,
-        title: 'Копилка',
-        subtitle: '23 мая · 13:45 · Иван',
-        amount: 5000,
-        type: 'income',
-        category: 'Копилка',
-        actorName: 'Иван',
-        actorInitials: 'И',
-        actorColor: '#EDE3FF',
-      },
-      {
-        id: 2,
-        title: 'Автомобиль',
-        subtitle: '23 мая · 13:45 · Анна',
-        amount: 5000,
-        type: 'expense',
-        category: 'Автомобиль',
-        actorName: 'Анна',
-        actorInitials: 'А',
-        actorColor: '#E8F0FF',
-      },
-      {
-        id: 3,
-        title: 'Продукты',
-        subtitle: '22 мая · 18:20 · Анна',
-        amount: 8400,
-        type: 'expense',
-        category: 'Продукты',
-        actorName: 'Анна',
-        actorInitials: 'А',
-        actorColor: '#FFE9DD',
-      },
-      {
-        id: 4,
-        title: 'Зарплата',
-        subtitle: '20 мая · 09:10 · Иван',
-        amount: 84999,
-        type: 'income',
-        category: 'Зарплата',
-        actorName: 'Иван',
-        actorInitials: 'И',
-        actorColor: '#EDE3FF',
-      },
-      {
-        id: 5,
-        title: 'Дом',
-        subtitle: '18 мая · 16:35 · Вы',
-        amount: 12100,
-        type: 'expense',
-        category: 'Дом',
-        actorName: 'Вы',
-        actorInitials: 'Я',
-        actorColor: '#F3ECFF',
-      },
-      {
-        id: 6,
-        title: 'Транспорт',
-        subtitle: '17 мая · 13:00 · Вы',
-        amount: 7200,
-        type: 'expense',
-        category: 'Транспорт',
-        actorName: 'Вы',
-        actorInitials: 'Я',
-        actorColor: '#F3ECFF',
-      },
-    ],
-  },
-  {
-    id: 2,
-    title: 'Бюджет 1',
-    type: 'joint',
-    typeTitle: 'Совместный',
-    subtitle: 'Бабушка + Дедушка',
-    color: MAIN_COLOR,
-    icon: 'people-outline',
-    balance: 18400,
-    income: 45000,
-    expense: 26600,
-    members: ['Бабушка'],
-    membersCount: 1,
-    accessText: 'Бабушка',
-    section: 'available',
-    completedGoals: [],
-    goals: [
-      {
-        id: 1,
-        title: 'Лекарства',
-        description: 'Цель для регулярных расходов на лекарства и медицинские товары.',
-        scope: 'personal',
-        scopeTitle: 'Личная цель',
-        members: ['Бабушка'],
-        currentAmount: 8000,
-        targetAmount: 15000,
-        color: MAIN_COLOR,
-      },
-      {
-        id: 2,
-        title: 'Ремонт комнаты',
-        description: 'Общая цель бабушки и дедушки на обновление комнаты.',
-        scope: 'family',
-        scopeTitle: 'Общая цель',
-        members: ['Бабушка'],
-        currentAmount: 12000,
-        targetAmount: 90000,
-        color: MAIN_COLOR,
-      },
-    ],
-    operations: [
-      {
-        id: 1,
-        title: 'Пенсия',
-        subtitle: '20 мая · 10:00 · Бабушка',
-        amount: 30000,
-        type: 'income',
-        category: 'Пенсия',
-        actorName: 'Бабушка',
-        actorInitials: 'Б',
-        actorColor: '#FFE9DD',
-      },
-      {
-        id: 2,
-        title: 'Аптека',
-        subtitle: '21 мая · 16:30 · Дедушка',
-        amount: 3200,
-        type: 'expense',
-        category: 'Аптека',
-        actorName: 'Дедушка',
-        actorInitials: 'Д',
-        actorColor: '#EDE3FF',
-      },
-    ],
-  },
-  {
-    id: 3,
-    title: 'Подарок бабушке',
-    type: 'goal',
-    typeTitle: 'Сбор',
-    subtitle: '3 участника · скрыто от бабушки',
-    color: MAIN_COLOR,
-    icon: 'gift-outline',
-    balance: 8500,
-    income: 8500,
-    expense: 0,
-    members: ['Вы', 'Мама', 'Папа'],
-    membersCount: 3,
-    accessText: 'Вы + Мама + Папа',
-    section: 'mine',
-    completedGoals: [],
-    goals: [
-      {
-        id: 1,
-        title: 'Бабушке на подарок',
-        description: 'Семейный сбор на подарок. Цель видна только выбранным участникам.',
-        scope: 'family',
-        scopeTitle: 'Общая цель',
-        members: ['Мама', 'Папа', 'Вы'],
-        currentAmount: 8500,
-        targetAmount: 15000,
-        color: MAIN_COLOR,
-      },
-    ],
-    operations: [
-      {
-        id: 1,
-        title: 'Взнос от мамы',
-        subtitle: '22 мая · 18:20 · Мария',
-        amount: 3000,
-        type: 'income',
-        category: 'Подарок',
-        actorName: 'Мария',
-        actorInitials: 'М',
-        actorColor: '#DDF8EF',
-      },
-      {
-        id: 2,
-        title: 'Взнос от папы',
-        subtitle: '22 мая · 19:10 · Иван',
-        amount: 4000,
-        type: 'income',
-        category: 'Подарок',
-        actorName: 'Иван',
-        actorInitials: 'И',
-        actorColor: '#EDE3FF',
-      },
-    ],
-  },
-];
 
 export default function FinanceScreen({ navigation }) {
   const { screenPadding } = useLayout();
 
-  const [financeSpaces, setFinanceSpaces] = useState(INITIAL_FINANCE_SPACES);
-  const [operationCategories, setOperationCategories] = useState(
-    INITIAL_OPERATION_CATEGORIES
-  );
+  const [isLoading, setIsLoading] = useState(true);
+  const [financeSpaces, setFinanceSpaces] = useState([]);
+  const [selectedSpaceId, setSelectedSpaceId] = useState(null);
+
+  const [operations, setOperations] = useState([]);
+  const [goals, setGoals] = useState([]);
+  const [completedGoals, setCompletedGoals] = useState([]);
+  const [operationCategories, setOperationCategories] = useState({
+    income: [],
+    expense: [],
+  });
+  const [stats, setStats] = useState(DEFAULT_STATS);
+
+  const [familyMembers, setFamilyMembers] = useState([]);
+  const [spaceMemberOptions, setSpaceMemberOptions] = useState([]);
 
   const [activeTab, setActiveTab] = useState('overview');
-  const [selectedSpaceId, setSelectedSpaceId] = useState(INITIAL_FINANCE_SPACES[0].id);
   const [isSelectorVisible, setIsSelectorVisible] = useState(false);
   const [isGoalsExpanded, setIsGoalsExpanded] = useState(false);
 
@@ -361,208 +229,26 @@ export default function FinanceScreen({ navigation }) {
   const [operationType, setOperationType] = useState('income');
   const [operationTitle, setOperationTitle] = useState('');
   const [operationAmount, setOperationAmount] = useState('');
-  const [operationCategory, setOperationCategory] = useState(
-    INITIAL_OPERATION_CATEGORIES.income[0]
-  );
+  const [operationCategory, setOperationCategory] = useState(null);
   const [newCategoryName, setNewCategoryName] = useState('');
 
   const [newGoalTitle, setNewGoalTitle] = useState('');
   const [newGoalAmount, setNewGoalAmount] = useState('');
   const [newGoalDescription, setNewGoalDescription] = useState('');
   const [newGoalScope, setNewGoalScope] = useState('personal');
-  const [newGoalMembers, setNewGoalMembers] = useState(['Вы']);
+  const [newGoalMemberIds, setNewGoalMemberIds] = useState([]);
 
-  const [draftSpaceMembers, setDraftSpaceMembers] = useState([]);
+  const [draftSpaceMemberIds, setDraftSpaceMemberIds] = useState([]);
 
   const selectedSpace = useMemo(() => {
-    return (
-      financeSpaces.find((space) => space.id === selectedSpaceId) ||
-      financeSpaces[0]
-    );
+    return financeSpaces.find((space) => space.id === selectedSpaceId) || null;
   }, [financeSpaces, selectedSpaceId]);
 
-  const visibleGoals = isGoalsExpanded
-    ? selectedSpace.goals
-    : selectedSpace.goals.slice(0, 1);
+  const visibleGoals = isGoalsExpanded ? goals : goals.slice(0, 1);
+  const hiddenGoalsCount = Math.max(goals.length - visibleGoals.length, 0);
 
-  const hiddenGoalsCount = Math.max(
-    selectedSpace.goals.length - visibleGoals.length,
-    0
-  );
-
-  const personalGoals = selectedSpace.goals.filter(
-    (goal) => goal.scope === 'personal'
-  );
-
-  const familyGoals = selectedSpace.goals.filter(
-    (goal) => goal.scope === 'family'
-  );
-
-  const stats = useMemo(() => {
-    const operations = selectedSpace.operations || [];
-
-    const incomeOperations = operations.filter(
-      (operation) => operation.type === 'income'
-    );
-
-    const expenseOperations = operations.filter(
-      (operation) => operation.type === 'expense'
-    );
-
-    const totalIncome = incomeOperations.reduce(
-      (sum, operation) => sum + Number(operation.amount || 0),
-      0
-    );
-
-    const totalExpense = expenseOperations.reduce(
-      (sum, operation) => sum + Number(operation.amount || 0),
-      0
-    );
-
-    const netAmount = totalIncome - totalExpense;
-
-    const expenseLoadPercent = totalIncome
-      ? Math.min(Math.round((totalExpense / totalIncome) * 100), 100)
-      : 0;
-
-    const savingPercent = totalIncome
-      ? Math.max(Math.round((netAmount / totalIncome) * 100), 0)
-      : 0;
-
-    const averageIncome = incomeOperations.length
-      ? Math.round(totalIncome / incomeOperations.length)
-      : 0;
-
-    const averageExpense = expenseOperations.length
-      ? Math.round(totalExpense / expenseOperations.length)
-      : 0;
-
-    const expenseCategories = expenseOperations.reduce((acc, operation) => {
-      const key = operation.category || 'Другое';
-      acc[key] = (acc[key] || 0) + Number(operation.amount || 0);
-      return acc;
-    }, {});
-
-    const incomeCategories = incomeOperations.reduce((acc, operation) => {
-      const key = operation.category || 'Другое';
-      acc[key] = (acc[key] || 0) + Number(operation.amount || 0);
-      return acc;
-    }, {});
-
-    const expenseCategoryStats = Object.entries(expenseCategories)
-      .map(([title, amount]) => ({
-        title,
-        amount,
-        percent: totalExpense ? Math.round((amount / totalExpense) * 100) : 0,
-      }))
-      .sort((a, b) => b.amount - a.amount);
-
-    const incomeCategoryStats = Object.entries(incomeCategories)
-      .map(([title, amount]) => ({
-        title,
-        amount,
-        percent: totalIncome ? Math.round((amount / totalIncome) * 100) : 0,
-      }))
-      .sort((a, b) => b.amount - a.amount);
-
-    const actorStatsMap = operations.reduce((acc, operation) => {
-      const key = operation.actorName || 'Участник';
-
-      if (!acc[key]) {
-        acc[key] = {
-          name: key,
-          initials: operation.actorInitials || key.charAt(0).toUpperCase(),
-          color: operation.actorColor || '#EDE3FF',
-          income: 0,
-          expense: 0,
-        };
-      }
-
-      if (operation.type === 'income') {
-        acc[key].income += Number(operation.amount || 0);
-      } else {
-        acc[key].expense += Number(operation.amount || 0);
-      }
-
-      return acc;
-    }, {});
-
-    const actorStats = Object.values(actorStatsMap)
-      .map((actor) => ({
-        ...actor,
-        total: actor.income + actor.expense,
-      }))
-      .sort((a, b) => b.total - a.total);
-
-    const goalsCurrentAmount = selectedSpace.goals.reduce(
-      (sum, goal) => sum + Number(goal.currentAmount || 0),
-      0
-    );
-
-    const goalsTargetAmount = selectedSpace.goals.reduce(
-      (sum, goal) => sum + Number(goal.targetAmount || 0),
-      0
-    );
-
-    const goalsProgressPercent = goalsTargetAmount
-      ? Math.min(Math.round((goalsCurrentAmount / goalsTargetAmount) * 100), 100)
-      : 0;
-
-    const periodStats = PERIOD_LABELS.map((label) => ({
-      label,
-      income: 0,
-      expense: 0,
-    }));
-
-    operations.forEach((operation) => {
-      const periodIndex = getOperationPeriodIndex(operation.subtitle);
-      const amount = Number(operation.amount || 0);
-
-      if (operation.type === 'income') {
-        periodStats[periodIndex].income += amount;
-      } else {
-        periodStats[periodIndex].expense += amount;
-      }
-    });
-
-    const periodMaxValue = Math.max(
-      ...periodStats.map((period) => Math.max(period.income, period.expense)),
-      1
-    );
-
-    const largestExpense = expenseOperations.reduce(
-      (maxOperation, operation) => {
-        if (!maxOperation || Number(operation.amount) > Number(maxOperation.amount)) {
-          return operation;
-        }
-
-        return maxOperation;
-      },
-      null
-    );
-
-    return {
-      totalIncome,
-      totalExpense,
-      netAmount,
-      incomeOperationsCount: incomeOperations.length,
-      expenseOperationsCount: expenseOperations.length,
-      expenseLoadPercent,
-      savingPercent,
-      averageIncome,
-      averageExpense,
-      expenseCategoryStats,
-      incomeCategoryStats,
-      actorStats,
-      goalsCurrentAmount,
-      goalsTargetAmount,
-      goalsProgressPercent,
-      periodStats,
-      periodMaxValue,
-      largestExpense,
-      operationCount: operations.length,
-    };
-  }, [selectedSpace]);
+  const personalGoals = goals.filter((goal) => goal.scope === 'personal');
+  const familyGoals = goals.filter((goal) => goal.scope === 'family');
 
   const formatNumber = (value, decimals = 0) => {
     const number = Number(value || 0);
@@ -593,34 +279,148 @@ export default function FinanceScreen({ navigation }) {
     }
 
     const percent = Math.round((goal.currentAmount / goal.targetAmount) * 100);
-
     return Math.min(percent, 100);
   };
 
-  const getMemberMeta = (name) => {
-    return (
-      FAMILY_MEMBERS.find((member) => member.name === name) || {
-        name,
-        initials: name.charAt(0).toUpperCase(),
-        color: '#EDE3FF',
+  const getMemberNames = (members) => {
+    if (!members || members.length === 0) {
+      return 'Без участников';
+    }
+
+    return members.map((member) => member.name).join(', ');
+  };
+
+  const loadSelectedSpaceData = useCallback(async (spaceId) => {
+    if (!spaceId) {
+      return;
+    }
+
+    try {
+      const [
+        recordsData,
+        categoriesData,
+        activeGoalsData,
+        completedGoalsData,
+        statisticsData,
+      ] = await Promise.all([
+        getFinanceRecords(spaceId),
+        getFinanceCategories(spaceId),
+        getFinanceGoals(spaceId, 'active'),
+        getFinanceGoals(spaceId, 'completed'),
+        getFinanceStatistics(spaceId),
+      ]);
+
+      const categories = (categoriesData || []).map(normalizeCategory);
+
+      setOperations((recordsData || []).map(normalizeRecord));
+      setGoals((activeGoalsData || []).map(normalizeGoal));
+      setCompletedGoals((completedGoalsData || []).map(normalizeGoal));
+      setStats(normalizeStats(statisticsData));
+      setOperationCategories({
+        income: categories.filter((category) => category.type === 'income'),
+        expense: categories.filter((category) => category.type === 'expense'),
+      });
+    } catch (error) {
+      Alert.alert('Финансы', getErrorMessage(error, 'Не удалось загрузить данные ячейки'));
+    }
+  }, []);
+
+  const loadInitialData = useCallback(async () => {
+    setIsLoading(true);
+
+    try {
+      const [spacesData, membersData] = await Promise.all([
+        getFinanceSpaces(),
+        getFinanceFamilyMembers(),
+      ]);
+
+      const normalizedSpaces = (spacesData || []).map(normalizeSpace);
+      const normalizedMembers = (membersData || []).map(normalizeMember);
+
+      setFinanceSpaces(normalizedSpaces);
+      setFamilyMembers(normalizedMembers);
+
+      if (normalizedSpaces.length === 0) {
+        setSelectedSpaceId(null);
+        setOperations([]);
+        setGoals([]);
+        setCompletedGoals([]);
+        setStats(DEFAULT_STATS);
+        return;
       }
-    );
+
+      const currentSpaceExists = normalizedSpaces.some(
+        (space) => space.id === selectedSpaceId
+      );
+
+      const nextSpaceId = currentSpaceExists
+        ? selectedSpaceId
+        : normalizedSpaces[0].id;
+
+      setSelectedSpaceId(nextSpaceId);
+      await loadSelectedSpaceData(nextSpaceId);
+    } catch (error) {
+      Alert.alert('Финансы', getErrorMessage(error, 'Не удалось загрузить финансы'));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [loadSelectedSpaceData, selectedSpaceId]);
+
+  const reloadSpaces = async () => {
+    const spacesData = await getFinanceSpaces();
+    const normalizedSpaces = (spacesData || []).map(normalizeSpace);
+    setFinanceSpaces(normalizedSpaces);
+    return normalizedSpaces;
   };
 
-  const openNotReady = (title) => {
-    Alert.alert(title, 'Этот раздел подключим позже');
+  const reloadCurrentSpace = async () => {
+    if (!selectedSpaceId) {
+      return;
+    }
+
+    await Promise.all([
+      reloadSpaces(),
+      loadSelectedSpaceData(selectedSpaceId),
+    ]);
   };
 
-  const updateSelectedSpace = (updater) => {
-    setFinanceSpaces((prevSpaces) =>
-      prevSpaces.map((space) => {
-        if (space.id !== selectedSpace.id) {
-          return space;
-        }
+  useFocusEffect(
+    useCallback(() => {
+      loadInitialData();
+    }, [loadInitialData])
+  );
 
-        return updater(space);
-      })
-    );
+  const createDefaultSpace = async () => {
+    try {
+      setIsLoading(true);
+
+      const currentMemberIds = familyMembers
+        .filter((member) => member.isCurrentUser)
+        .map((member) => member.id);
+
+      const createdSpace = await createFinanceSpace({
+        title: 'Наш бюджет',
+        type: 'joint',
+        memberIds: currentMemberIds,
+      });
+
+      const normalizedSpace = normalizeSpace(createdSpace);
+
+      await loadInitialData();
+      setSelectedSpaceId(normalizedSpace.id);
+      await loadSelectedSpaceData(normalizedSpace.id);
+    } catch (error) {
+      Alert.alert('Финансы', getErrorMessage(error, 'Не удалось создать ячейку'));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const selectSpace = async (space) => {
+    setSelectedSpaceId(space.id);
+    setIsSelectorVisible(false);
+    setIsGoalsExpanded(false);
+    await loadSelectedSpaceData(space.id);
   };
 
   const openGoalDetail = (goal) => {
@@ -636,32 +436,17 @@ export default function FinanceScreen({ navigation }) {
     navigation.navigate('FinanceGoals', {
       financeSpaceId: selectedSpace.id,
       financeSpaceTitle: selectedSpace.title,
-      color: MAIN_COLOR,
-      goals: selectedSpace.goals,
-      completedGoals: selectedSpace.completedGoals || [],
     });
   };
 
-  const completeGoal = (goal) => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-
-    const completedGoal = {
-      ...goal,
-      isCompleted: true,
-      completedAt: 'Сегодня',
-    };
-
-    updateSelectedSpace((space) => ({
-      ...space,
-      goals: space.goals.filter((item) => item.id !== goal.id),
-      completedGoals: [completedGoal, ...(space.completedGoals || [])],
-    }));
-  };
-
-  const selectSpace = (space) => {
-    setSelectedSpaceId(space.id);
-    setIsSelectorVisible(false);
-    setIsGoalsExpanded(false);
+  const completeGoal = async (goal) => {
+    try {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      await completeFinanceGoal(selectedSpace.id, goal.id);
+      await reloadCurrentSpace();
+    } catch (error) {
+      Alert.alert('Цель', getErrorMessage(error, 'Не удалось завершить цель'));
+    }
   };
 
   const toggleGoals = () => {
@@ -670,15 +455,19 @@ export default function FinanceScreen({ navigation }) {
   };
 
   const changeOperationType = (type) => {
+    const categories = operationCategories[type] || [];
+
     setOperationType(type);
-    setOperationCategory(operationCategories[type][0]);
+    setOperationCategory(categories[0] || null);
   };
 
   const openOperationModal = () => {
+    const categories = operationCategories.income || [];
+
     setOperationType('income');
     setOperationTitle('');
     setOperationAmount('');
-    setOperationCategory(operationCategories.income[0]);
+    setOperationCategory(categories[0] || null);
     setIsOperationModalVisible(true);
   };
 
@@ -695,16 +484,85 @@ export default function FinanceScreen({ navigation }) {
     setIsCategoryModalVisible(false);
   };
 
+  const submitNewCategory = async () => {
+    if (!selectedSpace) {
+      return;
+    }
+
+    const trimmedCategory = newCategoryName.trim();
+
+    if (!trimmedCategory) {
+      Alert.alert('Категория', 'Введите название категории');
+      return;
+    }
+
+    try {
+      const createdCategory = await createFinanceCategory({
+        spaceId: selectedSpace.id,
+        title: trimmedCategory,
+        type: operationType,
+      });
+
+      const normalizedCategory = normalizeCategory(createdCategory);
+
+      setOperationCategories((prev) => ({
+        ...prev,
+        [operationType]: [...prev[operationType], normalizedCategory],
+      }));
+
+      setOperationCategory(normalizedCategory);
+
+      if (!operationTitle.trim()) {
+        setOperationTitle(normalizedCategory.title);
+      }
+
+      setNewCategoryName('');
+      closeCategoryModal();
+    } catch (error) {
+      Alert.alert('Категория', getErrorMessage(error, 'Не удалось добавить категорию'));
+    }
+  };
+
+  const submitOperation = async () => {
+    if (!selectedSpace) {
+      return;
+    }
+
+    const normalizedAmount = operationAmount.replace(/\s/g, '').replace(',', '.');
+    const amount = Number(normalizedAmount);
+
+    if (!amount || amount <= 0) {
+      Alert.alert('Операция', 'Введите корректную сумму');
+      return;
+    }
+
+    const title = operationTitle.trim() || operationCategory?.title || 'Операция';
+
+    try {
+      await createFinanceRecord({
+        spaceId: selectedSpace.id,
+        type: operationType,
+        amount,
+        title,
+        category: operationCategory?.id,
+        categoryTitle: operationCategory?.title,
+      });
+
+      closeOperationModal();
+      await reloadCurrentSpace();
+    } catch (error) {
+      Alert.alert('Операция', getErrorMessage(error, 'Не удалось добавить операцию'));
+    }
+  };
+
   const openAddGoalModal = () => {
-    const defaultMembers = selectedSpace.members?.length
-      ? [selectedSpace.members[0]]
-      : ['Вы'];
+    const defaultMembers = selectedSpace?.members?.map((member) => member.id) || [];
 
     setNewGoalTitle('');
     setNewGoalAmount('');
     setNewGoalDescription('');
     setNewGoalScope('personal');
-    setNewGoalMembers(['Вы']);
+    setNewGoalMemberIds(defaultMembers);
     setIsAddGoalModalVisible(true);
   };
 
@@ -712,69 +570,31 @@ export default function FinanceScreen({ navigation }) {
     setIsAddGoalModalVisible(false);
   };
 
-  const openSettingsModal = () => {
-    setDraftSpaceMembers(selectedSpace.members || ['Вы']);
-    setIsSettingsModalVisible(true);
-  };
-
-  const closeSettingsModal = () => {
-    setIsSettingsModalVisible(false);
-  };
-
-  const toggleDraftSpaceMember = (name) => {
-    setDraftSpaceMembers((prev) => {
-      if (prev.includes(name)) {
-        return prev.filter((item) => item !== name);
-      }
-
-      return [...prev, name];
-    });
-  };
-
-  const saveSpaceMembers = () => {
-    if (draftSpaceMembers.length === 0) {
-      Alert.alert('Настройки ячейки', 'Нужно выбрать хотя бы одного участника');
-      return;
-    }
-
-    const membersText = draftSpaceMembers.join(' + ');
-
-    updateSelectedSpace((space) => ({
-      ...space,
-      members: draftSpaceMembers,
-      membersCount: draftSpaceMembers.length,
-      accessText: membersText,
-      subtitle: membersText,
-    }));
-
-    closeSettingsModal();
-  };
-
-  const toggleNewGoalMember = (name) => {
-    setNewGoalMembers((prev) => {
-      if (prev.includes(name)) {
-        return prev.filter((item) => item !== name);
-      }
-
-      return [...prev, name];
-    });
-  };
-
   const changeNewGoalScope = (scope) => {
     setNewGoalScope(scope);
 
-    if (scope === 'personal') {
-      setNewGoalMembers(['Вы']);
+    if (scope === 'family') {
+      setNewGoalMemberIds(selectedSpace?.members?.map((member) => member.id) || []);
     } else {
-      const defaultMembers = selectedSpace.members?.length
-        ? selectedSpace.members
-        : ['Вы'];
-
-      setNewGoalMembers(defaultMembers);
+      setNewGoalMemberIds([]);
     }
   };
 
-  const submitNewGoal = () => {
+  const toggleNewGoalMember = (memberId) => {
+    setNewGoalMemberIds((prev) => {
+      if (prev.includes(memberId)) {
+        return prev.filter((id) => id !== memberId);
+      }
+
+      return [...prev, memberId];
+    });
+  };
+
+  const submitNewGoal = async () => {
+    if (!selectedSpace) {
+      return;
+    }
+
     const title = newGoalTitle.trim();
     const targetAmount = Number(newGoalAmount.replace(/\s/g, '').replace(',', '.'));
 
@@ -788,116 +608,82 @@ export default function FinanceScreen({ navigation }) {
       return;
     }
 
-    if (newGoalScope === 'family' && newGoalMembers.length === 0) {
+    if (newGoalScope === 'family' && newGoalMemberIds.length === 0) {
       Alert.alert('Новая цель', 'Выберите участников цели');
       return;
     }
 
-    const newGoal = {
-      id: Date.now(),
-      title,
-      description: newGoalDescription.trim() || 'Описание цели пока не добавлено.',
-      scope: newGoalScope,
-      scopeTitle: newGoalScope === 'family' ? 'Общая цель' : 'Личная цель',
-      members: newGoalScope === 'family' ? newGoalMembers : ['Вы'],
-      currentAmount: 0,
-      targetAmount,
-      color: MAIN_COLOR,
-    };
+    try {
+      await createFinanceGoal({
+        spaceId: selectedSpace.id,
+        title,
+        description: newGoalDescription.trim(),
+        scope: newGoalScope,
+        targetAmount,
+        memberIds: newGoalScope === 'family' ? newGoalMemberIds : [],
+      });
 
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-
-    updateSelectedSpace((space) => ({
-      ...space,
-      goals: [newGoal, ...space.goals],
-    }));
-
-    setIsGoalsExpanded(true);
-    closeAddGoalModal();
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setIsGoalsExpanded(true);
+      closeAddGoalModal();
+      await reloadCurrentSpace();
+    } catch (error) {
+      Alert.alert('Новая цель', getErrorMessage(error, 'Не удалось добавить цель'));
+    }
   };
 
-  const submitNewCategory = () => {
-    const trimmedCategory = newCategoryName.trim();
-
-    if (!trimmedCategory) {
-      Alert.alert('Категория', 'Введите название категории');
+  const openSettingsModal = async () => {
+    if (!selectedSpace) {
       return;
     }
 
-    const currentCategories = operationCategories[operationType] || [];
-    const alreadyExists = currentCategories.some(
-      (category) => category.toLowerCase() === trimmedCategory.toLowerCase()
-    );
+    try {
+      const membersData = await getFinanceSpaceMembers(selectedSpace.id);
+      const normalizedMembers = (membersData || []).map(normalizeMember);
 
-    if (alreadyExists) {
-      Alert.alert('Категория', 'Такая категория уже есть');
-      return;
+      setSpaceMemberOptions(normalizedMembers);
+      setDraftSpaceMemberIds(
+        normalizedMembers
+          .filter((member) => member.isSelected)
+          .map((member) => member.id)
+      );
+      setIsSettingsModalVisible(true);
+    } catch (error) {
+      Alert.alert('Настройки', getErrorMessage(error, 'Не удалось загрузить участников'));
     }
-
-    setOperationCategories((prev) => ({
-      ...prev,
-      [operationType]: [...prev[operationType], trimmedCategory],
-    }));
-
-    setOperationCategory(trimmedCategory);
-
-    if (!operationTitle.trim()) {
-      setOperationTitle(trimmedCategory);
-    }
-
-    setNewCategoryName('');
-    closeCategoryModal();
   };
 
-  const submitOperation = () => {
-    const normalizedAmount = operationAmount.replace(/\s/g, '').replace(',', '.');
-    const amount = Number(normalizedAmount);
+  const closeSettingsModal = () => {
+    setIsSettingsModalVisible(false);
+  };
 
-    if (!amount || amount <= 0) {
-      Alert.alert('Операция', 'Введите корректную сумму');
-      return;
-    }
+  const toggleDraftSpaceMember = (memberId) => {
+    setDraftSpaceMemberIds((prev) => {
+      if (prev.includes(memberId)) {
+        return prev.filter((id) => id !== memberId);
+      }
 
-    const title = operationTitle.trim() || operationCategory;
-
-    const newOperation = {
-      id: Date.now(),
-      title,
-      subtitle: `Только что · ${CURRENT_USER.name}`,
-      amount,
-      type: operationType,
-      category: operationCategory,
-      actorName: CURRENT_USER.name,
-      actorInitials: CURRENT_USER.initials,
-      actorColor: CURRENT_USER.color,
-    };
-
-    updateSelectedSpace((space) => {
-      const balance =
-        operationType === 'income'
-          ? Number(space.balance || 0) + amount
-          : Number(space.balance || 0) - amount;
-
-      const income =
-        operationType === 'income'
-          ? Number(space.income || 0) + amount
-          : Number(space.income || 0);
-
-      const expense =
-        operationType === 'expense'
-          ? Number(space.expense || 0) + amount
-          : Number(space.expense || 0);
-
-      return {
-        ...space,
-        balance,
-        income,
-        expense,
-        operations: [newOperation, ...space.operations],
-      };
+      return [...prev, memberId];
     });
+  };
 
-    closeOperationModal();
+  const saveSpaceMembers = async () => {
+    if (!selectedSpace) {
+      return;
+    }
+
+    if (draftSpaceMemberIds.length === 0) {
+      Alert.alert('Настройки ячейки', 'Нужно выбрать хотя бы одного участника');
+      return;
+    }
+
+    try {
+      await updateFinanceSpaceMembers(selectedSpace.id, draftSpaceMemberIds);
+      closeSettingsModal();
+      await reloadCurrentSpace();
+    } catch (error) {
+      Alert.alert('Настройки', getErrorMessage(error, 'Не удалось сохранить доступ'));
+    }
   };
 
   const renderSegmentedTabs = () => (
@@ -937,6 +723,34 @@ export default function FinanceScreen({ navigation }) {
           allowFontScaling={false}
         >
           Статистика
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
+
+  const renderEmptyState = () => (
+    <View style={styles.emptyScreen}>
+      <View style={styles.emptyScreenIcon}>
+        <Ionicons name="wallet-outline" size={34} color="#FFFFFF" />
+      </View>
+
+      <Text style={styles.emptyScreenTitle} allowFontScaling={false}>
+        Финансовых ячеек пока нет
+      </Text>
+
+      <Text style={styles.emptyScreenText} allowFontScaling={false}>
+        Создайте первую ячейку, чтобы добавлять доходы, расходы, цели и участников.
+      </Text>
+
+      <TouchableOpacity
+        style={styles.purpleButton}
+        activeOpacity={0.85}
+        onPress={createDefaultSpace}
+      >
+        <Ionicons name="add" size={21} color="#FFFFFF" />
+
+        <Text style={styles.submitOperationText} allowFontScaling={false}>
+          Создать ячейку
         </Text>
       </TouchableOpacity>
     </View>
@@ -1049,7 +863,7 @@ export default function FinanceScreen({ navigation }) {
 
   const renderGoalItem = (goal, index) => {
     const percent = getGoalPercent(goal);
-    const isReadyToComplete = percent >= 100;
+    const isReadyToComplete = percent >= 100 || goal.isReadyToComplete;
 
     return (
       <TouchableOpacity
@@ -1088,7 +902,7 @@ export default function FinanceScreen({ navigation }) {
               >
                 {isReadyToComplete
                   ? 'Цель выполнена!'
-                  : `${goal.scopeTitle} · ${goal.members.join(', ')}`}
+                  : `${goal.scopeTitle} · ${getMemberNames(goal.members)}`}
               </Text>
             </View>
           </View>
@@ -1110,7 +924,7 @@ export default function FinanceScreen({ navigation }) {
               activeOpacity={0.75}
               onPress={(event) => {
                 event?.stopPropagation?.();
-                openNotReady('Настройки цели');
+                openGoalDetail(goal);
               }}
             >
               <Ionicons name="create-outline" size={14} color="#A7A7A7" />
@@ -1150,8 +964,8 @@ export default function FinanceScreen({ navigation }) {
     );
   };
 
-  const renderGoalSection = (title, goals) => {
-    if (goals.length === 0) {
+  const renderGoalSection = (title, sectionGoals) => {
+    if (sectionGoals.length === 0) {
       return null;
     }
 
@@ -1163,7 +977,7 @@ export default function FinanceScreen({ navigation }) {
           </Text>
         )}
 
-        {goals.map(renderGoalItem)}
+        {sectionGoals.map(renderGoalItem)}
       </View>
     );
   };
@@ -1205,7 +1019,7 @@ export default function FinanceScreen({ navigation }) {
         </TouchableOpacity>
       </View>
 
-      {selectedSpace.goals.length === 0 ? (
+      {goals.length === 0 ? (
         <Text style={styles.emptyGoalsText} allowFontScaling={false}>
           Целей пока нет
         </Text>
@@ -1246,7 +1060,7 @@ export default function FinanceScreen({ navigation }) {
 
         <TouchableOpacity
           activeOpacity={0.75}
-          onPress={() => openNotReady('Все операции')}
+          onPress={() => Alert.alert('Операции', 'Позже сделаем отдельный список')}
         >
           <Text style={styles.operationsAll} allowFontScaling={false}>
             все
@@ -1254,21 +1068,13 @@ export default function FinanceScreen({ navigation }) {
         </TouchableOpacity>
       </View>
 
-      {selectedSpace.operations.slice(0, 5).map((operation) => (
+      {operations.slice(0, 5).map((operation) => (
         <TouchableOpacity
           key={operation.id}
           style={styles.operationRow}
           activeOpacity={0.75}
-          onPress={() => openNotReady('Операция')}
         >
-          <View
-            style={[
-              styles.operationAvatar,
-              {
-                backgroundColor: operation.actorColor || '#EDE3FF',
-              },
-            ]}
-          >
+          <View style={styles.operationAvatar}>
             <Text style={styles.operationAvatarText} allowFontScaling={false}>
               {operation.actorInitials}
             </Text>
@@ -1306,6 +1112,12 @@ export default function FinanceScreen({ navigation }) {
           </Text>
         </TouchableOpacity>
       ))}
+
+      {operations.length === 0 && (
+        <Text style={styles.emptyLightText} allowFontScaling={false}>
+          Операций пока нет
+        </Text>
+      )}
     </View>
   );
 
@@ -1345,7 +1157,7 @@ export default function FinanceScreen({ navigation }) {
     if (stats.totalIncome === 0 && stats.totalExpense === 0) {
       title = 'Пока нет данных';
       text =
-        'Добавьте доходы и расходы, чтобы увидеть полноценную аналитику по этому финансовому блоку.';
+        'Добавьте доходы и расходы, чтобы увидеть полноценную аналитику по этой финансовой ячейке.';
     } else if (stats.netAmount > 0) {
       title = 'Бюджет в плюсе';
       text = `Доходы превышают расходы на ${formatCurrency(stats.netAmount)}. Сейчас удаётся сохранить около ${stats.savingPercent}% доходов.`;
@@ -1545,15 +1357,8 @@ export default function FinanceScreen({ navigation }) {
         </Text>
       ) : (
         stats.actorStats.map((actor) => (
-          <View key={actor.name} style={styles.actorStatsRow}>
-            <View
-              style={[
-                styles.actorStatsAvatar,
-                {
-                  backgroundColor: actor.color,
-                },
-              ]}
-            >
+          <View key={actor.id} style={styles.actorStatsRow}>
+            <View style={styles.actorStatsAvatar}>
               <Text style={styles.actorStatsAvatarText} allowFontScaling={false}>
                 {actor.initials}
               </Text>
@@ -1685,7 +1490,7 @@ export default function FinanceScreen({ navigation }) {
   );
 
   const renderSpacePickerItem = (space) => {
-    const isActive = space.id === selectedSpace.id;
+    const isActive = space.id === selectedSpace?.id;
 
     return (
       <TouchableOpacity
@@ -1728,64 +1533,42 @@ export default function FinanceScreen({ navigation }) {
     );
   };
 
-  const renderSpaceSelectorModal = () => {
-    const mySpaces = financeSpaces.filter((space) => space.section === 'mine');
-    const availableSpaces = financeSpaces.filter(
-      (space) => space.section === 'available'
-    );
-
-    return (
-      <Modal
-        visible={isSelectorVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setIsSelectorVisible(false)}
+  const renderSpaceSelectorModal = () => (
+    <Modal
+      visible={isSelectorVisible}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setIsSelectorVisible(false)}
+    >
+      <Pressable
+        style={styles.modalOverlay}
+        onPress={() => setIsSelectorVisible(false)}
       >
-        <Pressable
-          style={styles.modalOverlay}
-          onPress={() => setIsSelectorVisible(false)}
-        >
-          <Pressable style={styles.modalCard}>
-            <Text style={styles.modalTitle} allowFontScaling={false}>
-              Все блоки
-            </Text>
+        <Pressable style={styles.modalCard}>
+          <Text style={styles.modalTitle} allowFontScaling={false}>
+            Все ячейки
+          </Text>
 
-            <Text style={styles.modalSectionTitle} allowFontScaling={false}>
-              Мои
-            </Text>
+          {financeSpaces.map(renderSpacePickerItem)}
 
-            {mySpaces.map(renderSpacePickerItem)}
+          <TouchableOpacity
+            style={styles.createSpaceButton}
+            activeOpacity={0.85}
+            onPress={createDefaultSpace}
+          >
+            <Ionicons name="add" size={20} color="#FFFFFF" />
 
-            <View style={styles.modalDivider} />
-
-            <Text style={styles.modalSectionTitle} allowFontScaling={false}>
-              Вам доступно
-            </Text>
-
-            {availableSpaces.map(renderSpacePickerItem)}
-
-            <TouchableOpacity
-              style={styles.createSpaceButton}
-              activeOpacity={0.85}
-              onPress={() => {
-                setIsSelectorVisible(false);
-                openNotReady('Создать финансовый раздел');
-              }}
+            <Text
+              style={styles.createSpaceButtonText}
+              allowFontScaling={false}
             >
-              <Ionicons name="add" size={20} color="#FFFFFF" />
-
-              <Text
-                style={styles.createSpaceButtonText}
-                allowFontScaling={false}
-              >
-                Создать финансовый раздел
-              </Text>
-            </TouchableOpacity>
-          </Pressable>
+              Создать ячейку
+            </Text>
+          </TouchableOpacity>
         </Pressable>
-      </Modal>
-    );
-  };
+      </Pressable>
+    </Modal>
+  );
 
   const renderOperationTypeTabs = () => (
     <View style={styles.operationTypeWrapper}>
@@ -1831,12 +1614,12 @@ export default function FinanceScreen({ navigation }) {
 
   const renderCategoryChips = () => (
     <View style={styles.chipsWrap}>
-      {operationCategories[operationType].map((category) => {
-        const isSelected = category === operationCategory;
+      {(operationCategories[operationType] || []).map((category) => {
+        const isSelected = category.id === operationCategory?.id;
 
         return (
           <TouchableOpacity
-            key={category}
+            key={category.id}
             style={[
               styles.categoryChip,
               isSelected && styles.categoryChipActive,
@@ -1846,7 +1629,7 @@ export default function FinanceScreen({ navigation }) {
               setOperationCategory(category);
 
               if (!operationTitle.trim()) {
-                setOperationTitle(category);
+                setOperationTitle(category.title);
               }
             }}
           >
@@ -1857,7 +1640,7 @@ export default function FinanceScreen({ navigation }) {
               ]}
               allowFontScaling={false}
             >
-              {category}
+              {category.title}
             </Text>
           </TouchableOpacity>
         );
@@ -1931,28 +1714,20 @@ export default function FinanceScreen({ navigation }) {
         </Text>
 
         <View style={styles.membersWrap}>
-          {(selectedSpace.members || ['Вы']).map((memberName) => {
-            const member = getMemberMeta(memberName);
-            const isSelected = newGoalMembers.includes(memberName);
+          {(selectedSpace?.members || []).map((member) => {
+            const isSelected = newGoalMemberIds.includes(member.id);
 
             return (
               <TouchableOpacity
-                key={memberName}
+                key={member.id}
                 style={[
                   styles.memberChip,
                   isSelected && styles.memberChipActive,
                 ]}
                 activeOpacity={0.75}
-                onPress={() => toggleNewGoalMember(memberName)}
+                onPress={() => toggleNewGoalMember(member.id)}
               >
-                <View
-                  style={[
-                    styles.memberAvatar,
-                    {
-                      backgroundColor: member.color,
-                    },
-                  ]}
-                >
+                <View style={styles.memberAvatar}>
                   <Text style={styles.memberAvatarText} allowFontScaling={false}>
                     {member.initials}
                   </Text>
@@ -1971,24 +1746,17 @@ export default function FinanceScreen({ navigation }) {
 
   const renderSpaceMembersPicker = () => (
     <View style={styles.membersList}>
-      {FAMILY_MEMBERS.map((member) => {
-        const isSelected = draftSpaceMembers.includes(member.name);
+      {spaceMemberOptions.map((member) => {
+        const isSelected = draftSpaceMemberIds.includes(member.id);
 
         return (
           <TouchableOpacity
             key={member.id}
             style={styles.spaceMemberRow}
             activeOpacity={0.75}
-            onPress={() => toggleDraftSpaceMember(member.name)}
+            onPress={() => toggleDraftSpaceMember(member.id)}
           >
-            <View
-              style={[
-                styles.spaceMemberAvatar,
-                {
-                  backgroundColor: member.color,
-                },
-              ]}
-            >
+            <View style={styles.spaceMemberAvatar}>
               <Text style={styles.spaceMemberAvatarText} allowFontScaling={false}>
                 {member.initials}
               </Text>
@@ -2031,17 +1799,17 @@ export default function FinanceScreen({ navigation }) {
         style={styles.modalKeyboardView}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <Pressable style={styles.operationModalOverlay} onPress={closeOperationModal}>
-          <Pressable style={styles.operationBottomSheet}>
-            <View style={styles.operationModalHandle} />
+        <Pressable style={styles.bottomOverlay} onPress={closeOperationModal}>
+          <Pressable style={styles.bottomSheet}>
+            <View style={styles.modalHandle} />
 
-            <View style={styles.operationModalHeader}>
-              <Text style={styles.operationModalTitle} allowFontScaling={false}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalSheetTitle} allowFontScaling={false}>
                 Новая операция
               </Text>
 
               <TouchableOpacity
-                style={styles.operationModalClose}
+                style={styles.modalClose}
                 activeOpacity={0.75}
                 onPress={closeOperationModal}
               >
@@ -2051,7 +1819,7 @@ export default function FinanceScreen({ navigation }) {
 
             <ScrollView
               showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.operationModalContent}
+              contentContainerStyle={styles.modalContent}
             >
               {renderOperationTypeTabs()}
 
@@ -2129,17 +1897,17 @@ export default function FinanceScreen({ navigation }) {
         style={styles.modalKeyboardView}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <Pressable style={styles.categoryModalOverlay} onPress={closeCategoryModal}>
-          <Pressable style={styles.categoryModalCard}>
-            <View style={styles.operationModalHandle} />
+        <Pressable style={styles.bottomOverlay} onPress={closeCategoryModal}>
+          <Pressable style={styles.smallBottomSheet}>
+            <View style={styles.modalHandle} />
 
-            <View style={styles.operationModalHeader}>
-              <Text style={styles.operationModalTitle} allowFontScaling={false}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalSheetTitle} allowFontScaling={false}>
                 Новая категория
               </Text>
 
               <TouchableOpacity
-                style={styles.operationModalClose}
+                style={styles.modalClose}
                 activeOpacity={0.75}
                 onPress={closeCategoryModal}
               >
@@ -2188,17 +1956,17 @@ export default function FinanceScreen({ navigation }) {
         style={styles.modalKeyboardView}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <Pressable style={styles.categoryModalOverlay} onPress={closeAddGoalModal}>
-          <Pressable style={styles.goalModalCard}>
-            <View style={styles.operationModalHandle} />
+        <Pressable style={styles.bottomOverlay} onPress={closeAddGoalModal}>
+          <Pressable style={styles.bottomSheet}>
+            <View style={styles.modalHandle} />
 
-            <View style={styles.operationModalHeader}>
-              <Text style={styles.operationModalTitle} allowFontScaling={false}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalSheetTitle} allowFontScaling={false}>
                 Новая цель
               </Text>
 
               <TouchableOpacity
-                style={styles.operationModalClose}
+                style={styles.modalClose}
                 activeOpacity={0.75}
                 onPress={closeAddGoalModal}
               >
@@ -2208,7 +1976,7 @@ export default function FinanceScreen({ navigation }) {
 
             <ScrollView
               showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.operationModalContent}
+              contentContainerStyle={styles.modalContent}
             >
               {renderGoalScopeTabs()}
 
@@ -2282,17 +2050,17 @@ export default function FinanceScreen({ navigation }) {
         style={styles.modalKeyboardView}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <Pressable style={styles.categoryModalOverlay} onPress={closeSettingsModal}>
-          <Pressable style={styles.goalModalCard}>
-            <View style={styles.operationModalHandle} />
+        <Pressable style={styles.bottomOverlay} onPress={closeSettingsModal}>
+          <Pressable style={styles.bottomSheet}>
+            <View style={styles.modalHandle} />
 
-            <View style={styles.operationModalHeader}>
-              <Text style={styles.operationModalTitle} allowFontScaling={false}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalSheetTitle} allowFontScaling={false}>
                 Настройки ячейки
               </Text>
 
               <TouchableOpacity
-                style={styles.operationModalClose}
+                style={styles.modalClose}
                 activeOpacity={0.75}
                 onPress={closeSettingsModal}
               >
@@ -2322,6 +2090,48 @@ export default function FinanceScreen({ navigation }) {
       </KeyboardAvoidingView>
     </Modal>
   );
+
+  if (isLoading && financeSpaces.length === 0) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={['top']}>
+        <StatusBar style="dark" />
+
+        <View style={styles.loadingWrapper}>
+          <ActivityIndicator size="large" color={MAIN_COLOR} />
+          <Text style={styles.loadingText} allowFontScaling={false}>
+            Загружаем финансы...
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!selectedSpace) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={['top']}>
+        <StatusBar style="dark" />
+
+        <View style={[styles.container, { paddingHorizontal: screenPadding }]}>
+          <View style={styles.header}>
+            <TouchableOpacity
+              onPress={() => navigation.goBack()}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="arrow-back" size={25} color="#262626" />
+            </TouchableOpacity>
+
+            <Text style={styles.headerTitle} allowFontScaling={false}>
+              Финансы
+            </Text>
+
+            <View style={styles.headerSettingsButton} />
+          </View>
+
+          {renderEmptyState()}
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -2387,6 +2197,19 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
 
+  loadingWrapper: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  loadingText: {
+    marginTop: 12,
+    fontFamily: fontFamily.regular,
+    fontSize: fontSize.bodyM,
+    color: '#858585',
+  },
+
   header: {
     minHeight: 56,
     marginTop: 12,
@@ -2417,7 +2240,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#F4F4F4',
     flexDirection: 'row',
     padding: 3,
-    marginBottom: 0,
   },
 
   segmentedButton: {
@@ -2443,6 +2265,39 @@ const styles = StyleSheet.create({
 
   scrollContent: {
     paddingBottom: 140,
+  },
+
+  emptyScreen: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingBottom: 70,
+  },
+
+  emptyScreenIcon: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: MAIN_COLOR,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 18,
+  },
+
+  emptyScreenTitle: {
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.titleS,
+    color: '#262626',
+    marginBottom: 8,
+  },
+
+  emptyScreenText: {
+    textAlign: 'center',
+    fontFamily: fontFamily.regular,
+    fontSize: fontSize.bodyM,
+    lineHeight: 22,
+    color: '#858585',
+    marginBottom: 22,
   },
 
   budgetHeader: {
@@ -2777,6 +2632,7 @@ const styles = StyleSheet.create({
     width: 50,
     height: 50,
     borderRadius: 25,
+    backgroundColor: '#F3ECFF',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -2817,6 +2673,13 @@ const styles = StyleSheet.create({
 
   operationAmountExpense: {
     color: '#EF4444',
+  },
+
+  emptyLightText: {
+    paddingVertical: 14,
+    fontFamily: fontFamily.regular,
+    fontSize: fontSize.bodyM,
+    color: '#858585',
   },
 
   statsHeroCard: {
@@ -3176,6 +3039,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
+    backgroundColor: '#F3ECFF',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -3247,14 +3111,6 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
 
-  modalSectionTitle: {
-    textAlign: 'center',
-    fontFamily: fontFamily.regular,
-    fontSize: fontSize.bodyM,
-    color: '#262626',
-    marginBottom: 12,
-  },
-
   spacePickerItem: {
     minHeight: 62,
     flexDirection: 'row',
@@ -3292,18 +3148,12 @@ const styles = StyleSheet.create({
   },
 
   spacePickerArrow: {
-    width: 86,
+    width: 62,
     height: 34,
     borderRadius: 17,
     backgroundColor: '#F0F0F0',
     justifyContent: 'center',
     alignItems: 'center',
-  },
-
-  modalDivider: {
-    height: 1,
-    backgroundColor: '#DADADA',
-    marginVertical: 16,
   },
 
   createSpaceButton: {
@@ -3327,13 +3177,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
-  operationModalOverlay: {
+  bottomOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.58)',
     justifyContent: 'flex-end',
   },
 
-  operationBottomSheet: {
+  bottomSheet: {
     maxHeight: '88%',
     borderTopLeftRadius: 32,
     borderTopRightRadius: 32,
@@ -3343,7 +3193,16 @@ const styles = StyleSheet.create({
     paddingBottom: 26,
   },
 
-  operationModalHandle: {
+  smallBottomSheet: {
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 18,
+    paddingTop: 10,
+    paddingBottom: 30,
+  },
+
+  modalHandle: {
     alignSelf: 'center',
     width: 46,
     height: 5,
@@ -3352,7 +3211,7 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
 
-  operationModalHeader: {
+  modalHeader: {
     minHeight: 42,
     flexDirection: 'row',
     alignItems: 'center',
@@ -3360,13 +3219,13 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
 
-  operationModalTitle: {
+  modalSheetTitle: {
     fontFamily: fontFamily.medium,
     fontSize: fontSize.titleS,
     color: '#262626',
   },
 
-  operationModalClose: {
+  modalClose: {
     width: 36,
     height: 36,
     borderRadius: 18,
@@ -3375,7 +3234,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 
-  operationModalContent: {
+  modalContent: {
     paddingBottom: 16,
   },
 
@@ -3509,31 +3368,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-  },
-
-  categoryModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.58)',
-    justifyContent: 'flex-end',
-  },
-
-  categoryModalCard: {
-    borderTopLeftRadius: 32,
-    borderTopRightRadius: 32,
-    backgroundColor: '#FFFFFF',
     paddingHorizontal: 18,
-    paddingTop: 10,
-    paddingBottom: 30,
-  },
-
-  goalModalCard: {
-    maxHeight: '88%',
-    borderTopLeftRadius: 32,
-    borderTopRightRadius: 32,
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 18,
-    paddingTop: 10,
-    paddingBottom: 30,
   },
 
   membersWrap: {
@@ -3563,6 +3398,7 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 17,
+    backgroundColor: '#F3ECFF',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 8,
@@ -3606,6 +3442,7 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 21,
+    backgroundColor: '#F3ECFF',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,

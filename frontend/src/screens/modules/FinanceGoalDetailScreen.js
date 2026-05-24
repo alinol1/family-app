@@ -1,167 +1,131 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  Alert,
   Modal,
   Pressable,
   TextInput,
+  Alert,
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  LayoutAnimation,
+  UIManager,
 } from 'react-native';
 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 
 import { fontFamily, fontSize } from '../../utils/fonts';
 import { useLayout } from '../../utils/useLayout';
 
-const FALLBACK_GOAL = {
-  id: 1,
-  title: 'Купить машину',
-  description:
-    'Цель создана для постепенного накопления денег. Здесь можно отслеживать прогресс, участников и историю пополнений.',
-  scope: 'personal',
-  scopeTitle: 'Личная цель',
-  members: ['Вы'],
-  currentAmount: 34000,
-  targetAmount: 344556,
-  color: '#9456FE',
+import {
+  getFinanceGoalById,
+  updateFinanceGoal,
+  completeFinanceGoal,
+  createFinanceGoalContribution,
+  getFinanceGoalContributions,
+  getFinanceSpaceMembers,
+} from '../../api/finance';
+
+if (
+  Platform.OS === 'android' &&
+  UIManager.setLayoutAnimationEnabledExperimental
+) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
+const MAIN_COLOR = '#9456FE';
+
+const getErrorMessage = (error, fallback = 'Произошла ошибка') => {
+  return (
+    error?.response?.data?.error ||
+    error?.response?.data?.detail ||
+    fallback
+  );
 };
 
-const FAMILY_MEMBERS = [
-  {
-    id: 1,
-    name: 'Вы',
-    initials: 'Я',
-    color: '#EDE3FF',
-  },
-  {
-    id: 2,
-    name: 'Иван',
-    initials: 'И',
-    color: '#E8F0FF',
-  },
-  {
-    id: 3,
-    name: 'Анна',
-    initials: 'А',
-    color: '#FFE9DD',
-  },
-  {
-    id: 4,
-    name: 'Мария',
-    initials: 'М',
-    color: '#DDF8EF',
-  },
-  {
-    id: 5,
-    name: 'Бабушка',
-    initials: 'Б',
-    color: '#FFF3D6',
-  },
-];
+const toNumber = (value) => Number(value || 0);
 
-const MOCK_CONTRIBUTIONS = [
-  {
-    id: 1,
-    title: 'Пополнение цели',
-    subtitle: 'Сегодня · 10:30 · Иван',
-    amount: 5000,
-    initials: 'И',
-    color: '#EDE3FF',
-  },
-  {
-    id: 2,
-    title: 'Перевод из бюджета',
-    subtitle: '23 мая · 13:45 · Анна',
-    amount: 3000,
-    initials: 'А',
-    color: '#E8F0FF',
-  },
-  {
-    id: 3,
-    title: 'Пополнение цели',
-    subtitle: '21 мая · 19:20 · Вы',
-    amount: 2500,
-    initials: 'Я',
-    color: '#F3ECFF',
-  },
-  {
-    id: 4,
-    title: 'Взнос участника',
-    subtitle: '19 мая · 12:10 · Мария',
-    amount: 1500,
-    initials: 'М',
-    color: '#DDF8EF',
-  },
-];
+const normalizeMember = (member) => ({
+  id: member.id,
+  name: member.name || member.username || 'Участник',
+  initials: member.initials || (member.name || 'У').charAt(0).toUpperCase(),
+  avatarUrl: member.avatar_url || null,
+  isCurrentUser: Boolean(member.is_current_user),
+  isSelected: Boolean(member.is_selected),
+});
+
+const normalizeContribution = (contribution) => ({
+  id: contribution.id,
+  amount: toNumber(contribution.amount),
+  comment: contribution.comment || '',
+  createdByName: contribution.created_by_name || 'Участник',
+  actorInitials: contribution.actor_initials || 'У',
+  createdAt: contribution.created_at,
+});
+
+const normalizeGoal = (goal) => ({
+  id: goal.id,
+  title: goal.title,
+  description: goal.description || '',
+  scope: goal.scope,
+  scopeTitle:
+    goal.scope_display ||
+    (goal.scope === 'family' ? 'Общая цель' : 'Личная цель'),
+  currentAmount: toNumber(goal.current_amount),
+  targetAmount: toNumber(goal.target_amount),
+  progressPercent: toNumber(goal.progress_percent),
+  isReadyToComplete: Boolean(goal.is_ready_to_complete),
+  status: goal.status,
+  completedAt: goal.completed_at,
+  members: (goal.members || []).map(normalizeMember),
+  contributions: (goal.contributions || []).map(normalizeContribution),
+});
 
 export default function FinanceGoalDetailScreen({ navigation, route }) {
   const { screenPadding } = useLayout();
 
-  const goal = route?.params?.goal || FALLBACK_GOAL;
-  const financeSpaceTitle = route?.params?.financeSpaceTitle || 'Финансовый раздел';
+  const financeSpaceId = route?.params?.financeSpaceId;
+  const financeSpaceTitle = route?.params?.financeSpaceTitle || 'Финансовая ячейка';
+  const goalId = route?.params?.goalId || route?.params?.goal?.id;
 
-  const goalColor = goal.color || '#9456FE';
-  const targetAmount = Number(goal.targetAmount || 0);
-
-  const [description, setDescription] = useState(
-    goal.description || 'Описание цели пока не добавлено.'
-  );
-  const [membersList, setMembersList] = useState(
-    Array.isArray(goal.members) ? goal.members : []
-  );
-  const [contributions, setContributions] = useState(MOCK_CONTRIBUTIONS);
-  const [addedAmount, setAddedAmount] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+  const [goal, setGoal] = useState(null);
+  const [contributions, setContributions] = useState([]);
+  const [spaceMembers, setSpaceMembers] = useState([]);
 
   const [activeModal, setActiveModal] = useState(null);
-  const [draftDescription, setDraftDescription] = useState(description);
-  const [draftMembers, setDraftMembers] = useState(membersList);
+
   const [topUpAmount, setTopUpAmount] = useState('');
+  const [topUpComment, setTopUpComment] = useState('');
 
-  const currentAmount = Number(goal.currentAmount || 0) + addedAmount;
-  const remainingAmount = Math.max(targetAmount - currentAmount, 0);
+  const [draftDescription, setDraftDescription] = useState('');
+  const [draftTitle, setDraftTitle] = useState('');
+  const [draftTargetAmount, setDraftTargetAmount] = useState('');
+  const [draftScope, setDraftScope] = useState('personal');
+  const [draftMemberIds, setDraftMemberIds] = useState([]);
 
-  const progressPercent = targetAmount
-    ? Math.min(Math.round((currentAmount / targetAmount) * 100), 100)
-    : 0;
-
-  const isGoalCompleted = progressPercent >= 100;
-
-  const modalTitle = useMemo(() => {
-    if (activeModal === 'settings') {
-      return 'Настройки цели';
+  const percent = useMemo(() => {
+    if (!goal?.targetAmount) {
+      return 0;
     }
 
-    if (activeModal === 'description') {
-      return 'Описание цели';
-    }
+    const value = Math.round((goal.currentAmount / goal.targetAmount) * 100);
+    return Math.min(value, 100);
+  }, [goal]);
 
-    if (activeModal === 'members') {
-      return 'Участники цели';
-    }
-
-    if (activeModal === 'history') {
-      return 'История пополнений';
-    }
-
-    if (activeModal === 'topup') {
-      return 'Пополнить цель';
-    }
-
-    return '';
-  }, [activeModal]);
+  const isCompleted = goal?.status === 'completed';
+  const isReadyToComplete = !isCompleted && percent >= 100;
 
   const formatNumber = (value, decimals = 0) => {
     const number = Number(value || 0);
-    const sign = number < 0 ? '-' : '';
-    const absoluteNumber = Math.abs(number);
-    const fixedValue = absoluteNumber.toFixed(decimals);
+    const fixedValue = number.toFixed(decimals);
     const [integerPart, decimalPart] = fixedValue.split('.');
 
     const groupedInteger = integerPart.replace(
@@ -170,594 +134,613 @@ export default function FinanceGoalDetailScreen({ navigation, route }) {
     );
 
     if (decimals > 0) {
-      return `${sign}${groupedInteger},${decimalPart}`;
+      return `${groupedInteger},${decimalPart}`;
     }
 
-    return `${sign}${groupedInteger}`;
+    return groupedInteger;
   };
 
-  const formatCurrency = (value, decimals = 0) => {
-    return `${formatNumber(value, decimals)} ₽`;
+  const formatCurrency = (value) => `${formatNumber(value)} ₽`;
+
+  const formatDate = (value) => {
+    if (!value) {
+      return 'Сегодня';
+    }
+
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      return 'Сегодня';
+    }
+
+    return date.toLocaleDateString('ru-RU');
   };
 
-  const openModal = (type) => {
-    if (type === 'description') {
-      setDraftDescription(description);
+  const getMemberNames = (members) => {
+    if (!members || members.length === 0) {
+      return 'Без участников';
     }
 
-    if (type === 'members') {
-      setDraftMembers(membersList);
+    return members.map((member) => member.name).join(', ');
+  };
+
+  const loadGoal = useCallback(async () => {
+    if (!financeSpaceId || !goalId) {
+      Alert.alert('Цель', 'Не передан идентификатор цели');
+      navigation.goBack();
+      return;
     }
 
-    if (type === 'topup') {
+    setIsLoading(true);
+
+    try {
+      const [goalData, contributionsData, membersData] = await Promise.all([
+        getFinanceGoalById(financeSpaceId, goalId),
+        getFinanceGoalContributions(financeSpaceId, goalId),
+        getFinanceSpaceMembers(financeSpaceId),
+      ]);
+
+      const normalizedGoal = normalizeGoal(goalData);
+
+      setGoal(normalizedGoal);
+      setContributions((contributionsData || []).map(normalizeContribution));
+      setSpaceMembers((membersData || []).map(normalizeMember));
+    } catch (error) {
+      Alert.alert('Цель', getErrorMessage(error, 'Не удалось загрузить цель'));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [financeSpaceId, goalId, navigation]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadGoal();
+    }, [loadGoal])
+  );
+
+  const openModal = (modalName) => {
+    if (!goal) {
+      return;
+    }
+
+    if (modalName === 'topup') {
       setTopUpAmount('');
+      setTopUpComment('');
     }
 
-    setActiveModal(type);
+    if (modalName === 'description') {
+      setDraftDescription(goal.description || '');
+    }
+
+    if (modalName === 'settings') {
+      setDraftTitle(goal.title);
+      setDraftTargetAmount(String(goal.targetAmount || ''));
+      setDraftDescription(goal.description || '');
+      setDraftScope(goal.scope || 'personal');
+      setDraftMemberIds(goal.members.map((member) => member.id));
+    }
+
+    setActiveModal(modalName);
   };
 
   const closeModal = () => {
     setActiveModal(null);
   };
 
-  const openNotReady = (title) => {
-    Alert.alert(title, 'Этот раздел подключим позже');
-  };
-
-  const saveDescription = () => {
-    const trimmedDescription = draftDescription.trim();
-
-    if (!trimmedDescription) {
-      Alert.alert('Описание', 'Описание не может быть пустым');
-      return;
-    }
-
-    setDescription(trimmedDescription);
-    closeModal();
-  };
-
-  const toggleDraftMember = (name) => {
-    setDraftMembers((prev) => {
-      if (prev.includes(name)) {
-        return prev.filter((item) => item !== name);
+  const toggleDraftMember = (memberId) => {
+    setDraftMemberIds((prev) => {
+      if (prev.includes(memberId)) {
+        return prev.filter((id) => id !== memberId);
       }
 
-      return [...prev, name];
+      return [...prev, memberId];
     });
   };
 
-  const saveMembers = () => {
-    if (draftMembers.length === 0) {
-      Alert.alert('Участники цели', 'Нужно выбрать хотя бы одного участника');
+  const changeDraftScope = (scope) => {
+    setDraftScope(scope);
+
+    if (scope === 'personal') {
+      setDraftMemberIds([]);
       return;
     }
 
-    setMembersList(draftMembers);
-    closeModal();
+    const selectedMembers = spaceMembers
+      .filter((member) => member.isSelected)
+      .map((member) => member.id);
+
+    setDraftMemberIds(selectedMembers);
   };
 
-  const submitTopUp = () => {
-    const normalizedValue = topUpAmount.replace(/\s/g, '').replace(',', '.');
-    const amount = Number(normalizedValue);
+  const submitTopUp = async () => {
+    const amount = Number(topUpAmount.replace(/\s/g, '').replace(',', '.'));
 
     if (!amount || amount <= 0) {
-      Alert.alert('Пополнить цель', 'Введите корректную сумму пополнения');
+      Alert.alert('Пополнение', 'Введите корректную сумму');
       return;
     }
 
-    const newContribution = {
-      id: Date.now(),
-      title: 'Пополнение цели',
-      subtitle: 'Только что · Вы',
-      amount,
-      initials: 'Я',
-      color: '#F3ECFF',
-    };
+    try {
+      await createFinanceGoalContribution({
+        spaceId: financeSpaceId,
+        goalId,
+        amount,
+        comment: topUpComment.trim(),
+      });
 
-    setAddedAmount((prev) => prev + amount);
-    setContributions((prev) => [newContribution, ...prev]);
-    setTopUpAmount('');
-    closeModal();
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      closeModal();
+      await loadGoal();
+    } catch (error) {
+      Alert.alert('Пополнение', getErrorMessage(error, 'Не удалось пополнить цель'));
+    }
   };
 
-  const renderBackgroundGrid = () => {
-    const verticalLines = Array.from({ length: 10 });
-    const horizontalLines = Array.from({ length: 8 });
+  const saveDescription = async () => {
+    try {
+      await updateFinanceGoal(financeSpaceId, goalId, {
+        description: draftDescription.trim(),
+      });
 
-    return (
-      <View pointerEvents="none" style={styles.gridLayer}>
-        {verticalLines.map((_, index) => (
-          <View
-            key={`vertical-${index}`}
-            style={[
-              styles.gridVerticalLine,
-              {
-                left: `${index * 10}%`,
-              },
-            ]}
-          />
-        ))}
+      closeModal();
+      await loadGoal();
+    } catch (error) {
+      Alert.alert('Описание', getErrorMessage(error, 'Не удалось сохранить описание'));
+    }
+  };
 
-        {horizontalLines.map((_, index) => (
-          <View
-            key={`horizontal-${index}`}
-            style={[
-              styles.gridHorizontalLine,
-              {
-                top: `${index * 14}%`,
-              },
-            ]}
-          />
-        ))}
-      </View>
+  const saveSettings = async () => {
+    const title = draftTitle.trim();
+    const targetAmount = Number(
+      String(draftTargetAmount).replace(/\s/g, '').replace(',', '.')
     );
+
+    if (!title) {
+      Alert.alert('Настройки цели', 'Введите название цели');
+      return;
+    }
+
+    if (!targetAmount || targetAmount <= 0) {
+      Alert.alert('Настройки цели', 'Введите корректную сумму цели');
+      return;
+    }
+
+    if (draftScope === 'family' && draftMemberIds.length === 0) {
+      Alert.alert('Настройки цели', 'Выберите участников цели');
+      return;
+    }
+
+    try {
+      await updateFinanceGoal(financeSpaceId, goalId, {
+        title,
+        target_amount: targetAmount,
+        description: draftDescription.trim(),
+        scope: draftScope,
+        member_ids: draftScope === 'family' ? draftMemberIds : [],
+      });
+
+      closeModal();
+      await loadGoal();
+    } catch (error) {
+      Alert.alert('Настройки цели', getErrorMessage(error, 'Не удалось сохранить настройки'));
+    }
   };
 
-  const renderHero = () => (
-    <View style={styles.heroCard}>
-      {renderBackgroundGrid()}
+  const finishGoal = async () => {
+    try {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      await completeFinanceGoal(financeSpaceId, goalId);
+      await loadGoal();
 
-      <View style={styles.heroContent}>
+      Alert.alert('Цель', 'Цель перенесена в выполненные');
+    } catch (error) {
+      Alert.alert('Цель', getErrorMessage(error, 'Не удалось завершить цель'));
+    }
+  };
+
+  const renderProgressCard = () => (
+    <View style={styles.progressCard}>
+      <View style={styles.progressTopRow}>
+        <View>
+          <Text style={styles.progressLabel} allowFontScaling={false}>
+            Накоплено
+          </Text>
+
+          <Text style={styles.progressAmount} allowFontScaling={false}>
+            {formatCurrency(goal.currentAmount)}
+          </Text>
+        </View>
+
+        <View style={styles.percentCircle}>
+          <Text style={styles.percentText} allowFontScaling={false}>
+            {percent}%
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.progressTrack}>
         <View
           style={[
-            styles.goalIconLarge,
+            styles.progressFill,
             {
-              backgroundColor: isGoalCompleted ? '#10B981' : goalColor,
+              width: `${percent}%`,
             },
           ]}
+        />
+      </View>
+
+      <View style={styles.progressFooter}>
+        <Text style={styles.progressFooterText} allowFontScaling={false}>
+          Сейчас {formatCurrency(goal.currentAmount)}
+        </Text>
+
+        <Text style={styles.progressFooterText} allowFontScaling={false}>
+          Цель {formatCurrency(goal.targetAmount)}
+        </Text>
+      </View>
+
+      {isReadyToComplete && (
+        <TouchableOpacity
+          style={styles.finishGoalButton}
+          activeOpacity={0.85}
+          onPress={finishGoal}
         >
-          <Ionicons
-            name={isGoalCompleted ? 'checkmark-outline' : 'flag-outline'}
-            size={30}
-            color="#FFFFFF"
-          />
-        </View>
+          <Ionicons name="checkmark" size={21} color="#FFFFFF" />
 
-        <Text style={styles.goalTitle} allowFontScaling={false} numberOfLines={2}>
-          {goal.title}
-        </Text>
+          <Text style={styles.finishGoalButtonText} allowFontScaling={false}>
+            Перенести в выполненные
+          </Text>
+        </TouchableOpacity>
+      )}
 
-        <View style={styles.goalTypeBadge}>
-          <Ionicons
-            name={goal.scope === 'family' ? 'people-outline' : 'person-outline'}
-            size={15}
-            color={goalColor}
-          />
+      {isCompleted && (
+        <View style={styles.completedBadge}>
+          <Ionicons name="sparkles-outline" size={18} color={MAIN_COLOR} />
 
-          <Text style={styles.goalTypeText} allowFontScaling={false} numberOfLines={1}>
-            {goal.scopeTitle || 'Цель'} · {financeSpaceTitle}
+          <Text style={styles.completedBadgeText} allowFontScaling={false}>
+            Цель выполнена · {formatDate(goal.completedAt)}
           </Text>
         </View>
-
-        <Text style={styles.mainAmount} allowFontScaling={false} numberOfLines={1}>
-          {formatCurrency(currentAmount)}
-        </Text>
-
-        <Text style={styles.targetAmount} allowFontScaling={false} numberOfLines={1}>
-          из {formatCurrency(targetAmount)}
-        </Text>
-
-        {isGoalCompleted && (
-          <View style={styles.completedBadge}>
-            <Ionicons name="sparkles-outline" size={17} color="#10B981" />
-
-            <Text style={styles.completedText} allowFontScaling={false}>
-              Цель выполнена! Ура 🎉
-            </Text>
-          </View>
-        )}
-
-        <View style={styles.progressTrack}>
-          <View
-            style={[
-              styles.progressFill,
-              {
-                width: `${progressPercent}%`,
-                backgroundColor: isGoalCompleted ? '#10B981' : goalColor,
-              },
-            ]}
-          />
-
-          <Text style={styles.progressInsideText} allowFontScaling={false}>
-            {progressPercent}%
-          </Text>
-        </View>
-      </View>
+      )}
     </View>
   );
 
-  const renderStats = () => (
-    <View style={styles.statsRow}>
-      <View style={styles.statCard}>
-        <Text style={styles.statLabel} allowFontScaling={false}>
-          Собрано
-        </Text>
-
-        <Text style={styles.statValue} allowFontScaling={false} numberOfLines={1}>
-          {formatCurrency(currentAmount)}
-        </Text>
-      </View>
-
-      <View style={styles.statCard}>
-        <Text style={styles.statLabel} allowFontScaling={false}>
-          Осталось
-        </Text>
-
-        <Text style={styles.statValue} allowFontScaling={false} numberOfLines={1}>
-          {formatCurrency(remainingAmount)}
-        </Text>
-      </View>
-    </View>
-  );
-
-  const renderDescription = () => (
+  const renderDescriptionCard = () => (
     <View style={styles.infoCard}>
       <View style={styles.cardHeader}>
         <Text style={styles.cardTitle} allowFontScaling={false}>
           Описание
         </Text>
 
-        <TouchableOpacity
-          style={styles.iconButton}
-          activeOpacity={0.75}
-          onPress={() => openModal('description')}
-        >
-          <Ionicons name="create-outline" size={20} color="#9456FE" />
-        </TouchableOpacity>
+        {!isCompleted && (
+          <TouchableOpacity
+            style={styles.smallIconButton}
+            activeOpacity={0.75}
+            onPress={() => openModal('description')}
+          >
+            <Ionicons name="create-outline" size={17} color={MAIN_COLOR} />
+          </TouchableOpacity>
+        )}
       </View>
 
       <Text style={styles.descriptionText} allowFontScaling={false}>
-        {description}
+        {goal.description || 'Описание цели пока не добавлено.'}
       </Text>
     </View>
   );
 
-  const renderMembers = () => (
+  const renderMembersCard = () => (
     <View style={styles.infoCard}>
       <View style={styles.cardHeader}>
         <Text style={styles.cardTitle} allowFontScaling={false}>
-          Участники цели
+          Участники
         </Text>
 
-        <TouchableOpacity
-          style={styles.iconButton}
-          activeOpacity={0.75}
-          onPress={() => openModal('members')}
-        >
-          <Ionicons name="person-add-outline" size={20} color="#9456FE" />
-        </TouchableOpacity>
+        <Text style={styles.cardCounter} allowFontScaling={false}>
+          {goal.members.length}
+        </Text>
       </View>
 
-      {membersList.length === 0 ? (
-        <Text style={styles.emptyText} allowFontScaling={false}>
-          Участники пока не выбраны
+      {goal.members.length === 0 ? (
+        <Text style={styles.descriptionText} allowFontScaling={false}>
+          Участники не выбраны
         </Text>
       ) : (
-        <View style={styles.membersWrap}>
-          {membersList.map((member, index) => (
-            <View key={`${member}-${index}`} style={styles.memberChip}>
-              <View style={styles.memberAvatar}>
-                <Text style={styles.memberAvatarText} allowFontScaling={false}>
-                  {member.charAt(0).toUpperCase()}
-                </Text>
-              </View>
-
-              <Text style={styles.memberName} allowFontScaling={false} numberOfLines={1}>
-                {member}
+        goal.members.map((member) => (
+          <View key={member.id} style={styles.memberRow}>
+            <View style={styles.memberAvatar}>
+              <Text style={styles.memberAvatarText} allowFontScaling={false}>
+                {member.initials}
               </Text>
             </View>
-          ))}
-        </View>
+
+            <View style={styles.memberTextBlock}>
+              <Text style={styles.memberName} allowFontScaling={false}>
+                {member.name}
+              </Text>
+
+              <Text style={styles.memberSubtitle} allowFontScaling={false}>
+                Участник цели
+              </Text>
+            </View>
+          </View>
+        ))
       )}
     </View>
   );
 
-  const renderContribution = (item) => (
-    <TouchableOpacity
-      key={item.id}
-      style={styles.contributionRow}
-      activeOpacity={0.75}
-      onPress={() => openNotReady('Операция цели')}
-    >
-      <View
-        style={[
-          styles.contributionAvatar,
-          {
-            backgroundColor: item.color,
-          },
-        ]}
-      >
-        <Text style={styles.contributionAvatarText} allowFontScaling={false}>
-          {item.initials}
-        </Text>
-      </View>
-
-      <View style={styles.contributionTextBlock}>
-        <Text style={styles.contributionTitle} allowFontScaling={false} numberOfLines={1}>
-          {item.title}
-        </Text>
-
-        <Text style={styles.contributionSubtitle} allowFontScaling={false} numberOfLines={1}>
-          {item.subtitle}
-        </Text>
-      </View>
-
-      <Text style={styles.contributionAmount} allowFontScaling={false}>
-        +{formatCurrency(item.amount)}
-      </Text>
-    </TouchableOpacity>
-  );
-
-  const renderHistory = () => (
-    <View style={styles.historyCard}>
+  const renderHistoryCard = () => (
+    <View style={styles.infoCard}>
       <View style={styles.cardHeader}>
         <Text style={styles.cardTitle} allowFontScaling={false}>
           История пополнений
         </Text>
 
-        <TouchableOpacity
-          activeOpacity={0.75}
-          onPress={() => openModal('history')}
-        >
-          <Text style={styles.viewAllText} allowFontScaling={false}>
-            все
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {contributions.slice(0, 2).map(renderContribution)}
-    </View>
-  );
-
-  const renderSettingsRow = ({ icon, title, subtitle, onPress }) => (
-    <TouchableOpacity
-      style={styles.settingsRow}
-      activeOpacity={0.75}
-      onPress={onPress}
-    >
-      <View style={styles.settingsIcon}>
-        <Ionicons name={icon} size={22} color="#9456FE" />
-      </View>
-
-      <View style={styles.settingsTextBlock}>
-        <Text style={styles.settingsTitle} allowFontScaling={false} numberOfLines={1}>
-          {title}
-        </Text>
-
-        <Text style={styles.settingsSubtitle} allowFontScaling={false} numberOfLines={1}>
-          {subtitle}
+        <Text style={styles.cardCounter} allowFontScaling={false}>
+          {contributions.length}
         </Text>
       </View>
 
-      <Ionicons name="chevron-forward" size={20} color="#B8B8B8" />
-    </TouchableOpacity>
-  );
-
-  const renderSettingsModal = () => (
-    <View>
-      {renderSettingsRow({
-        icon: 'settings-outline',
-        title: 'Настройки цели',
-        subtitle: 'Название, сумма, тип цели',
-        onPress: () => openNotReady('Настройки цели'),
-      })}
-
-      {renderSettingsRow({
-        icon: 'create-outline',
-        title: 'Изменить описание',
-        subtitle: 'Краткое описание и заметки',
-        onPress: () => openModal('description'),
-      })}
-
-      {renderSettingsRow({
-        icon: 'people-outline',
-        title: 'Участники цели',
-        subtitle: 'Добавить или убрать людей',
-        onPress: () => openModal('members'),
-      })}
-
-      {renderSettingsRow({
-        icon: 'time-outline',
-        title: 'История пополнений',
-        subtitle: 'Все взносы по цели',
-        onPress: () => openModal('history'),
-      })}
-
-      {renderSettingsRow({
-        icon: 'add-circle-outline',
-        title: 'Пополнить цель',
-        subtitle: isGoalCompleted ? 'Цель уже выполнена' : 'Добавить новый взнос',
-        onPress: () => openModal('topup'),
-      })}
-    </View>
-  );
-
-  const renderDescriptionModal = () => (
-    <View>
-      <Text style={styles.modalLabel} allowFontScaling={false}>
-        Краткое описание
-      </Text>
-
-      <TextInput
-        style={styles.descriptionInput}
-        value={draftDescription}
-        onChangeText={setDraftDescription}
-        multiline
-        textAlignVertical="top"
-        placeholder="Например: копим на первый взнос, подарок или крупную покупку"
-        placeholderTextColor="#A1A1A1"
-      />
-
-      <TouchableOpacity
-        style={[
-          styles.modalPrimaryButton,
-          {
-            backgroundColor: goalColor,
-          },
-        ]}
-        activeOpacity={0.85}
-        onPress={saveDescription}
-      >
-        <Text style={styles.modalPrimaryButtonText} allowFontScaling={false}>
-          Сохранить описание
+      {contributions.length === 0 ? (
+        <Text style={styles.descriptionText} allowFontScaling={false}>
+          Пополнений пока нет
         </Text>
-      </TouchableOpacity>
-    </View>
-  );
-
-  const renderMembersModal = () => (
-    <View>
-      <Text style={styles.modalHint} allowFontScaling={false}>
-        Выберите членов семьи, которые участвуют в этой цели.
-      </Text>
-
-      {FAMILY_MEMBERS.map((member) => {
-        const isSelected = draftMembers.includes(member.name);
-
-        return (
-          <TouchableOpacity
-            key={member.id}
-            style={styles.memberSelectRow}
-            activeOpacity={0.75}
-            onPress={() => toggleDraftMember(member.name)}
-          >
-            <View
-              style={[
-                styles.memberSelectAvatar,
-                {
-                  backgroundColor: member.color,
-                },
-              ]}
-            >
-              <Text style={styles.memberSelectAvatarText} allowFontScaling={false}>
-                {member.initials}
+      ) : (
+        contributions.map((item) => (
+          <View key={item.id} style={styles.contributionRow}>
+            <View style={styles.contributionAvatar}>
+              <Text style={styles.contributionAvatarText} allowFontScaling={false}>
+                {item.actorInitials}
               </Text>
             </View>
 
-            <Text style={styles.memberSelectName} allowFontScaling={false}>
-              {member.name}
-            </Text>
+            <View style={styles.contributionTextBlock}>
+              <Text style={styles.contributionTitle} allowFontScaling={false}>
+                {item.createdByName}
+              </Text>
 
-            <View
-              style={[
-                styles.checkbox,
-                isSelected && {
-                  backgroundColor: goalColor,
-                  borderColor: goalColor,
-                },
-              ]}
-            >
-              {isSelected && (
-                <Ionicons name="checkmark" size={16} color="#FFFFFF" />
-              )}
+              <Text
+                style={styles.contributionSubtitle}
+                allowFontScaling={false}
+                numberOfLines={1}
+              >
+                {formatDate(item.createdAt)}
+                {item.comment ? ` · ${item.comment}` : ''}
+              </Text>
             </View>
-          </TouchableOpacity>
-        );
-      })}
 
-      <TouchableOpacity
-        style={[
-          styles.modalPrimaryButton,
-          {
-            backgroundColor: goalColor,
-          },
-        ]}
-        activeOpacity={0.85}
-        onPress={saveMembers}
-      >
-        <Text style={styles.modalPrimaryButtonText} allowFontScaling={false}>
-          Сохранить участников
-        </Text>
-      </TouchableOpacity>
-    </View>
-  );
-
-  const renderHistoryModal = () => (
-    <View>
-      <Text style={styles.modalHint} allowFontScaling={false}>
-        Все пополнения по выбранной цели.
-      </Text>
-
-      {contributions.map(renderContribution)}
-    </View>
-  );
-
-  const renderTopUpModal = () => (
-    <View>
-      <Text style={styles.modalLabel} allowFontScaling={false}>
-        Сумма пополнения
-      </Text>
-
-      <TextInput
-        style={styles.amountInput}
-        value={topUpAmount}
-        onChangeText={setTopUpAmount}
-        keyboardType="numeric"
-        placeholder="Например: 5000"
-        placeholderTextColor="#A1A1A1"
-      />
-
-      <View style={styles.quickAmountRow}>
-        {[1000, 3000, 5000].map((amount) => (
-          <TouchableOpacity
-            key={amount}
-            style={styles.quickAmountButton}
-            activeOpacity={0.75}
-            onPress={() => setTopUpAmount(String(amount))}
-          >
-            <Text style={styles.quickAmountText} allowFontScaling={false}>
-              {formatCurrency(amount)}
+            <Text style={styles.contributionAmount} allowFontScaling={false}>
+              +{formatCurrency(item.amount)}
             </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+          </View>
+        ))
+      )}
+    </View>
+  );
+
+  const renderScopeTabs = () => (
+    <View style={styles.scopeTabs}>
+      <TouchableOpacity
+        style={[
+          styles.scopeTab,
+          draftScope === 'personal' && styles.scopeTabActive,
+        ]}
+        activeOpacity={0.85}
+        onPress={() => changeDraftScope('personal')}
+      >
+        <Text
+          style={[
+            styles.scopeTabText,
+            draftScope === 'personal' && styles.scopeTabTextActive,
+          ]}
+          allowFontScaling={false}
+        >
+          Личная
+        </Text>
+      </TouchableOpacity>
 
       <TouchableOpacity
         style={[
-          styles.modalPrimaryButton,
-          {
-            backgroundColor: isGoalCompleted ? '#10B981' : goalColor,
-          },
+          styles.scopeTab,
+          draftScope === 'family' && styles.scopeTabActive,
         ]}
         activeOpacity={0.85}
-        onPress={submitTopUp}
+        onPress={() => changeDraftScope('family')}
       >
-        <Ionicons name="add" size={20} color="#FFFFFF" />
-
-        <Text style={styles.modalPrimaryButtonText} allowFontScaling={false}>
-          Пополнить цель
+        <Text
+          style={[
+            styles.scopeTabText,
+            draftScope === 'family' && styles.scopeTabTextActive,
+          ]}
+          allowFontScaling={false}
+        >
+          Общая
         </Text>
       </TouchableOpacity>
     </View>
   );
 
-  const renderModalContent = () => {
-    if (activeModal === 'settings') {
-      return renderSettingsModal();
+  const renderDraftMembersPicker = () => {
+    if (draftScope !== 'family') {
+      return null;
     }
 
-    if (activeModal === 'description') {
-      return renderDescriptionModal();
-    }
+    const availableMembers = spaceMembers.filter((member) => member.isSelected);
 
-    if (activeModal === 'members') {
-      return renderMembersModal();
-    }
+    return (
+      <>
+        <Text style={styles.inputLabel} allowFontScaling={false}>
+          Участники цели
+        </Text>
 
-    if (activeModal === 'history') {
-      return renderHistoryModal();
-    }
+        {availableMembers.length === 0 ? (
+          <Text style={styles.emptyMembersText} allowFontScaling={false}>
+            Сначала добавьте участников в настройках финансовой ячейки.
+          </Text>
+        ) : (
+          <View style={styles.membersWrap}>
+            {availableMembers.map((member) => {
+              const isSelected = draftMemberIds.includes(member.id);
 
-    if (activeModal === 'topup') {
-      return renderTopUpModal();
-    }
+              return (
+                <TouchableOpacity
+                  key={member.id}
+                  style={[
+                    styles.memberChip,
+                    isSelected && styles.memberChipActive,
+                  ]}
+                  activeOpacity={0.75}
+                  onPress={() => toggleDraftMember(member.id)}
+                >
+                  <View style={styles.memberChipAvatar}>
+                    <Text style={styles.memberChipAvatarText} allowFontScaling={false}>
+                      {member.initials}
+                    </Text>
+                  </View>
 
-    return null;
+                  <Text style={styles.memberChipName} allowFontScaling={false}>
+                    {member.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
+      </>
+    );
   };
 
-  const renderBottomModal = () => (
+  const renderTopUpModal = () => (
     <Modal
-      visible={Boolean(activeModal)}
+      visible={activeModal === 'topup'}
+      transparent
+      animationType="fade"
+      onRequestClose={closeModal}
+    >
+      <KeyboardAvoidingView
+        style={styles.modalKeyboardView}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <Pressable style={styles.modalOverlay} onPress={closeModal}>
+          <Pressable style={styles.smallBottomSheet}>
+            <View style={styles.modalHandle} />
+
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle} allowFontScaling={false}>
+                Пополнить цель
+              </Text>
+
+              <TouchableOpacity
+                style={styles.modalCloseButton}
+                activeOpacity={0.75}
+                onPress={closeModal}
+              >
+                <Ionicons name="close" size={22} color="#262626" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.inputLabel} allowFontScaling={false}>
+              Сумма
+            </Text>
+
+            <TextInput
+              style={styles.textInput}
+              value={topUpAmount}
+              onChangeText={setTopUpAmount}
+              keyboardType="numeric"
+              placeholder="Сумма"
+              placeholderTextColor="#A1A1A1"
+              autoFocus
+            />
+
+            <Text style={styles.inputLabel} allowFontScaling={false}>
+              Комментарий
+            </Text>
+
+            <TextInput
+              style={styles.textInput}
+              value={topUpComment}
+              onChangeText={setTopUpComment}
+              placeholder="Например: перевод в копилку"
+              placeholderTextColor="#A1A1A1"
+            />
+
+            <TouchableOpacity
+              style={styles.submitButton}
+              activeOpacity={0.85}
+              onPress={submitTopUp}
+            >
+              <Ionicons name="add" size={21} color="#FFFFFF" />
+
+              <Text style={styles.submitButtonText} allowFontScaling={false}>
+                Пополнить
+              </Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+
+  const renderDescriptionModal = () => (
+    <Modal
+      visible={activeModal === 'description'}
+      transparent
+      animationType="fade"
+      onRequestClose={closeModal}
+    >
+      <KeyboardAvoidingView
+        style={styles.modalKeyboardView}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <Pressable style={styles.modalOverlay} onPress={closeModal}>
+          <Pressable style={styles.smallBottomSheet}>
+            <View style={styles.modalHandle} />
+
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle} allowFontScaling={false}>
+                Описание цели
+              </Text>
+
+              <TouchableOpacity
+                style={styles.modalCloseButton}
+                activeOpacity={0.75}
+                onPress={closeModal}
+              >
+                <Ionicons name="close" size={22} color="#262626" />
+              </TouchableOpacity>
+            </View>
+
+            <TextInput
+              style={styles.descriptionInput}
+              value={draftDescription}
+              onChangeText={setDraftDescription}
+              multiline
+              textAlignVertical="top"
+              placeholder="Описание цели"
+              placeholderTextColor="#A1A1A1"
+            />
+
+            <TouchableOpacity
+              style={styles.submitButton}
+              activeOpacity={0.85}
+              onPress={saveDescription}
+            >
+              <Ionicons name="checkmark" size={21} color="#FFFFFF" />
+
+              <Text style={styles.submitButtonText} allowFontScaling={false}>
+                Сохранить
+              </Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+
+  const renderSettingsModal = () => (
+    <Modal
+      visible={activeModal === 'settings'}
       transparent
       animationType="fade"
       onRequestClose={closeModal}
@@ -772,7 +755,7 @@ export default function FinanceGoalDetailScreen({ navigation, route }) {
 
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle} allowFontScaling={false}>
-                {modalTitle}
+                Настройки цели
               </Text>
 
               <TouchableOpacity
@@ -786,15 +769,84 @@ export default function FinanceGoalDetailScreen({ navigation, route }) {
 
             <ScrollView
               showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.modalScrollContent}
+              contentContainerStyle={styles.modalContent}
             >
-              {renderModalContent()}
+              {renderScopeTabs()}
+
+              <Text style={styles.inputLabel} allowFontScaling={false}>
+                Название цели
+              </Text>
+
+              <TextInput
+                style={styles.textInput}
+                value={draftTitle}
+                onChangeText={setDraftTitle}
+                placeholder="Название цели"
+                placeholderTextColor="#A1A1A1"
+              />
+
+              <Text style={styles.inputLabel} allowFontScaling={false}>
+                Сумма цели
+              </Text>
+
+              <TextInput
+                style={styles.textInput}
+                value={draftTargetAmount}
+                onChangeText={setDraftTargetAmount}
+                keyboardType="numeric"
+                placeholder="Сумма"
+                placeholderTextColor="#A1A1A1"
+              />
+
+              <Text style={styles.inputLabel} allowFontScaling={false}>
+                Описание
+              </Text>
+
+              <TextInput
+                style={styles.descriptionInput}
+                value={draftDescription}
+                onChangeText={setDraftDescription}
+                multiline
+                textAlignVertical="top"
+                placeholder="Описание цели"
+                placeholderTextColor="#A1A1A1"
+              />
+
+              {renderDraftMembersPicker()}
+
+              <TouchableOpacity
+                style={styles.submitButton}
+                activeOpacity={0.85}
+                onPress={saveSettings}
+              >
+                <Ionicons name="checkmark" size={21} color="#FFFFFF" />
+
+                <Text style={styles.submitButtonText} allowFontScaling={false}>
+                  Сохранить изменения
+                </Text>
+              </TouchableOpacity>
             </ScrollView>
           </Pressable>
         </Pressable>
       </KeyboardAvoidingView>
     </Modal>
   );
+
+  if (isLoading || !goal) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={['top']}>
+        <StatusBar style="dark" />
+
+        <View style={styles.loadingWrapper}>
+          <ActivityIndicator size="large" color={MAIN_COLOR} />
+
+          <Text style={styles.loadingText} allowFontScaling={false}>
+            Загружаем цель...
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -814,11 +866,11 @@ export default function FinanceGoalDetailScreen({ navigation, route }) {
           </Text>
 
           <TouchableOpacity
-            style={styles.headerSettingsButton}
+            style={styles.headerRightButton}
             activeOpacity={0.75}
             onPress={() => openModal('settings')}
           >
-            <Ionicons name="settings-outline" size={20} color="#9456FE" />
+            <Ionicons name="settings-outline" size={20} color={MAIN_COLOR} />
           </TouchableOpacity>
         </View>
 
@@ -826,50 +878,62 @@ export default function FinanceGoalDetailScreen({ navigation, route }) {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scrollContent}
         >
-          {renderHero()}
+          <View style={styles.heroCard}>
+            <View style={styles.heroIcon}>
+              <Ionicons
+                name={isCompleted ? 'checkmark-outline' : 'flag-outline'}
+                size={28}
+                color="#FFFFFF"
+              />
+            </View>
 
-          {renderStats()}
+            <Text style={styles.heroTitle} allowFontScaling={false}>
+              {goal.title}
+            </Text>
 
-          {renderDescription()}
+            <Text style={styles.heroSubtitle} allowFontScaling={false}>
+              {goal.scopeTitle} · {getMemberNames(goal.members)}
+            </Text>
 
-          {renderMembers()}
+            <Text style={styles.heroSpace} allowFontScaling={false}>
+              {financeSpaceTitle}
+            </Text>
+          </View>
 
-          {renderHistory()}
+          {renderProgressCard()}
+          {renderDescriptionCard()}
+          {renderMembersCard()}
+          {renderHistoryCard()}
         </ScrollView>
 
-        <View
-          style={[
-            styles.buttonWrapper,
-            {
-              left: screenPadding,
-              right: screenPadding,
-            },
-          ]}
-        >
-          <TouchableOpacity
+        {!isCompleted && (
+          <View
             style={[
-              styles.mainButton,
+              styles.buttonWrapper,
               {
-                backgroundColor: isGoalCompleted ? '#10B981' : goalColor,
+                left: screenPadding,
+                right: screenPadding,
               },
             ]}
-            activeOpacity={0.85}
-            onPress={() => openModal('topup')}
           >
-            <Ionicons
-              name={isGoalCompleted ? 'checkmark-outline' : 'add'}
-              size={22}
-              color="#FFFFFF"
-            />
+            <TouchableOpacity
+              style={styles.mainButton}
+              activeOpacity={0.85}
+              onPress={() => openModal('topup')}
+            >
+              <Ionicons name="add" size={22} color="#FFFFFF" />
 
-            <Text style={styles.mainButtonText} allowFontScaling={false}>
-              {isGoalCompleted ? 'Цель выполнена' : 'Пополнить цель'}
-            </Text>
-          </TouchableOpacity>
-        </View>
+              <Text style={styles.mainButtonText} allowFontScaling={false}>
+                Пополнить цель
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
 
-      {renderBottomModal()}
+      {renderTopUpModal()}
+      {renderDescriptionModal()}
+      {renderSettingsModal()}
     </SafeAreaView>
   );
 }
@@ -883,6 +947,19 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
+  },
+
+  loadingWrapper: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  loadingText: {
+    marginTop: 12,
+    fontFamily: fontFamily.regular,
+    fontSize: fontSize.bodyM,
+    color: '#858585',
   },
 
   header: {
@@ -900,7 +977,7 @@ const styles = StyleSheet.create({
     color: '#262626',
   },
 
-  headerSettingsButton: {
+  headerRightButton: {
     width: 38,
     height: 38,
     borderRadius: 19,
@@ -914,122 +991,96 @@ const styles = StyleSheet.create({
   },
 
   heroCard: {
-    position: 'relative',
-    overflow: 'hidden',
-    minHeight: 356,
-    borderRadius: 30,
-    backgroundColor: '#FFFFFF',
+    borderRadius: 28,
+    backgroundColor: '#202020',
+    padding: 22,
+    alignItems: 'center',
+    marginTop: 10,
     marginBottom: 12,
   },
 
-  gridLayer: {
-    ...StyleSheet.absoluteFillObject,
-    opacity: 0.48,
-  },
-
-  gridVerticalLine: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    width: 1,
-    backgroundColor: '#EFEFEF',
-  },
-
-  gridHorizontalLine: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    height: 1,
-    backgroundColor: '#EFEFEF',
-  },
-
-  heroContent: {
-    flex: 1,
-    alignItems: 'center',
-    paddingHorizontal: 18,
-    paddingTop: 28,
-    paddingBottom: 24,
-  },
-
-  goalIconLarge: {
-    width: 66,
-    height: 66,
-    borderRadius: 33,
+  heroIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: MAIN_COLOR,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 14,
   },
 
-  goalTitle: {
+  heroTitle: {
     textAlign: 'center',
-    fontFamily: fontFamily.bold || fontFamily.medium,
-    fontWeight: '800',
-    fontSize: 32,
-    color: '#262626',
-    letterSpacing: -0.8,
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.titleS,
+    color: '#FFFFFF',
+  },
+
+  heroSubtitle: {
+    marginTop: 6,
+    textAlign: 'center',
+    fontFamily: fontFamily.regular,
+    fontSize: fontSize.caption,
+    color: '#CFCFCF',
+  },
+
+  heroSpace: {
+    marginTop: 8,
+    textAlign: 'center',
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.caption,
+    color: '#C9B2FF',
+  },
+
+  progressCard: {
+    borderRadius: 24,
+    backgroundColor: '#F7F7F7',
+    padding: 18,
     marginBottom: 12,
   },
 
-  goalTypeBadge: {
-    maxWidth: '100%',
-    minHeight: 34,
-    borderRadius: 17,
-    backgroundColor: '#F3ECFF',
+  progressTopRow: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 13,
-    marginBottom: 26,
   },
 
-  goalTypeText: {
-    marginLeft: 6,
+  progressLabel: {
     fontFamily: fontFamily.regular,
     fontSize: fontSize.caption,
-    color: '#6F45B8',
-  },
-
-  mainAmount: {
-    textAlign: 'center',
-    fontFamily: fontFamily.bold || fontFamily.medium,
-    fontWeight: '800',
-    fontSize: 38,
-    color: '#262626',
-    letterSpacing: -1.2,
-  },
-
-  targetAmount: {
-    marginTop: 4,
-    marginBottom: 14,
-    textAlign: 'center',
-    fontFamily: fontFamily.regular,
-    fontSize: fontSize.bodyM,
     color: '#858585',
   },
 
-  completedBadge: {
-    minHeight: 36,
-    borderRadius: 18,
-    backgroundColor: '#E8FAF3',
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    marginBottom: 18,
+  progressAmount: {
+    marginTop: 5,
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.titleS,
+    color: '#262626',
   },
 
-  completedText: {
-    marginLeft: 7,
+  percentCircle: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: '#F3ECFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  percentText: {
     fontFamily: fontFamily.medium,
-    fontSize: fontSize.bodyM,
-    color: '#10B981',
+    fontSize: fontSize.bodyL,
+    color: MAIN_COLOR,
   },
 
   progressTrack: {
     width: '100%',
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#F1F1F1',
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#E9E9E9',
     overflow: 'hidden',
     justifyContent: 'center',
+    marginTop: 16,
   },
 
   progressFill: {
@@ -1037,42 +1088,54 @@ const styles = StyleSheet.create({
     left: 0,
     top: 0,
     bottom: 0,
-    borderRadius: 19,
+    borderRadius: 18,
+    backgroundColor: MAIN_COLOR,
   },
 
-  progressInsideText: {
-    textAlign: 'center',
-    fontFamily: fontFamily.medium,
-    fontSize: fontSize.bodyM,
-    color: '#262626',
-  },
-
-  statsRow: {
+  progressFooter: {
+    marginTop: 10,
     flexDirection: 'row',
-    gap: 8,
-    marginBottom: 12,
+    justifyContent: 'space-between',
   },
 
-  statCard: {
-    flex: 1,
-    minHeight: 84,
-    borderRadius: 22,
-    backgroundColor: '#F7F7F7',
-    paddingHorizontal: 16,
-    justifyContent: 'center',
-  },
-
-  statLabel: {
+  progressFooterText: {
     fontFamily: fontFamily.regular,
-    fontSize: fontSize.bodyM,
+    fontSize: fontSize.caption,
     color: '#858585',
-    marginBottom: 6,
   },
 
-  statValue: {
+  finishGoalButton: {
+    marginTop: 16,
+    height: 52,
+    borderRadius: 21,
+    backgroundColor: MAIN_COLOR,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  finishGoalButtonText: {
+    marginLeft: 7,
     fontFamily: fontFamily.medium,
-    fontSize: fontSize.titleS,
-    color: '#262626',
+    fontSize: fontSize.bodyM,
+    color: '#FFFFFF',
+  },
+
+  completedBadge: {
+    marginTop: 16,
+    minHeight: 46,
+    borderRadius: 23,
+    backgroundColor: '#F3ECFF',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+  },
+
+  completedBadgeText: {
+    marginLeft: 8,
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.bodyM,
+    color: MAIN_COLOR,
   },
 
   infoCard: {
@@ -1082,21 +1145,12 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
 
-  historyCard: {
-    borderRadius: 24,
-    backgroundColor: '#F7F7F7',
-    paddingHorizontal: 18,
-    paddingTop: 18,
-    paddingBottom: 8,
-    marginBottom: 12,
-  },
-
   cardHeader: {
-    minHeight: 30,
-    marginBottom: 10,
+    minHeight: 34,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    marginBottom: 8,
   },
 
   cardTitle: {
@@ -1105,11 +1159,17 @@ const styles = StyleSheet.create({
     color: '#262626',
   },
 
-  iconButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: '#FFFFFF',
+  cardCounter: {
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.bodyM,
+    color: MAIN_COLOR,
+  },
+
+  smallIconButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F3ECFF',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1121,43 +1181,30 @@ const styles = StyleSheet.create({
     color: '#525252',
   },
 
-  emptyText: {
-    fontFamily: fontFamily.regular,
-    fontSize: fontSize.bodyM,
-    color: '#858585',
-  },
-
-  membersWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-
-  memberChip: {
-    minHeight: 42,
-    maxWidth: '100%',
-    borderRadius: 21,
-    backgroundColor: '#FFFFFF',
+  memberRow: {
+    minHeight: 58,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingLeft: 5,
-    paddingRight: 14,
   },
 
   memberAvatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#EDE3FF',
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#F3ECFF',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 8,
+    marginRight: 12,
   },
 
   memberAvatarText: {
     fontFamily: fontFamily.medium,
     fontSize: fontSize.bodyM,
-    color: '#9456FE',
+    color: MAIN_COLOR,
+  },
+
+  memberTextBlock: {
+    flex: 1,
   },
 
   memberName: {
@@ -1166,16 +1213,24 @@ const styles = StyleSheet.create({
     color: '#262626',
   },
 
+  memberSubtitle: {
+    marginTop: 3,
+    fontFamily: fontFamily.regular,
+    fontSize: fontSize.caption,
+    color: '#858585',
+  },
+
   contributionRow: {
-    minHeight: 68,
+    minHeight: 62,
     flexDirection: 'row',
     alignItems: 'center',
   },
 
   contributionAvatar: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#F3ECFF',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -1183,23 +1238,23 @@ const styles = StyleSheet.create({
 
   contributionAvatarText: {
     fontFamily: fontFamily.medium,
-    fontSize: fontSize.bodyL,
-    color: '#9456FE',
+    fontSize: fontSize.bodyM,
+    color: MAIN_COLOR,
   },
 
   contributionTextBlock: {
     flex: 1,
-    paddingRight: 8,
+    paddingRight: 10,
   },
 
   contributionTitle: {
-    fontFamily: fontFamily.regular,
+    fontFamily: fontFamily.medium,
     fontSize: fontSize.bodyM,
     color: '#262626',
   },
 
   contributionSubtitle: {
-    marginTop: 4,
+    marginTop: 3,
     fontFamily: fontFamily.regular,
     fontSize: fontSize.caption,
     color: '#858585',
@@ -1208,13 +1263,7 @@ const styles = StyleSheet.create({
   contributionAmount: {
     fontFamily: fontFamily.medium,
     fontSize: fontSize.bodyM,
-    color: '#20B846',
-  },
-
-  viewAllText: {
-    fontFamily: fontFamily.regular,
-    fontSize: fontSize.caption,
-    color: '#A1A1A1',
+    color: MAIN_COLOR,
   },
 
   buttonWrapper: {
@@ -1225,10 +1274,11 @@ const styles = StyleSheet.create({
   mainButton: {
     height: 56,
     borderRadius: 22,
+    backgroundColor: MAIN_COLOR,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#9456FE',
+    shadowColor: MAIN_COLOR,
     shadowOffset: {
       width: 0,
       height: 8,
@@ -1255,14 +1305,23 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
 
-  bottomSheet: {
-    maxHeight: '86%',
+  smallBottomSheet: {
     borderTopLeftRadius: 32,
     borderTopRightRadius: 32,
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 18,
     paddingTop: 10,
-    paddingBottom: 26,
+    paddingBottom: 30,
+  },
+
+  bottomSheet: {
+    maxHeight: '88%',
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 18,
+    paddingTop: 10,
+    paddingBottom: 30,
   },
 
   modalHandle: {
@@ -1279,7 +1338,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 10,
   },
 
   modalTitle: {
@@ -1297,64 +1356,33 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 
-  modalScrollContent: {
-    paddingBottom: 16,
+  modalContent: {
+    paddingBottom: 10,
   },
 
-  settingsRow: {
-    minHeight: 68,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-
-  settingsIcon: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    backgroundColor: '#F3ECFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-
-  settingsTextBlock: {
-    flex: 1,
-    paddingRight: 10,
-  },
-
-  settingsTitle: {
+  inputLabel: {
     fontFamily: fontFamily.medium,
     fontSize: fontSize.bodyM,
     color: '#262626',
+    marginBottom: 8,
   },
 
-  settingsSubtitle: {
-    marginTop: 3,
+  textInput: {
+    height: 54,
+    borderRadius: 22,
+    backgroundColor: '#F7F7F7',
+    paddingHorizontal: 18,
     fontFamily: fontFamily.regular,
-    fontSize: fontSize.caption,
-    color: '#858585',
-  },
-
-  modalLabel: {
-    fontFamily: fontFamily.medium,
     fontSize: fontSize.bodyM,
     color: '#262626',
-    marginBottom: 10,
-  },
-
-  modalHint: {
-    fontFamily: fontFamily.regular,
-    fontSize: fontSize.bodyM,
-    lineHeight: 21,
-    color: '#858585',
     marginBottom: 14,
   },
 
   descriptionInput: {
-    minHeight: 150,
+    minHeight: 116,
     borderRadius: 22,
     backgroundColor: '#F7F7F7',
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     paddingTop: 14,
     paddingBottom: 14,
     fontFamily: fontFamily.regular,
@@ -1363,93 +1391,102 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
 
-  amountInput: {
-    height: 58,
-    borderRadius: 22,
-    backgroundColor: '#F7F7F7',
-    paddingHorizontal: 18,
-    fontFamily: fontFamily.medium,
-    fontSize: fontSize.titleS,
-    color: '#262626',
-    marginBottom: 12,
-  },
-
-  quickAmountRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 14,
-  },
-
-  quickAmountButton: {
-    flex: 1,
+  scopeTabs: {
     height: 42,
-    borderRadius: 18,
-    backgroundColor: '#F7F7F7',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
-  quickAmountText: {
-    fontFamily: fontFamily.medium,
-    fontSize: fontSize.caption,
-    color: '#262626',
-  },
-
-  modalPrimaryButton: {
-    minHeight: 54,
-    borderRadius: 22,
+    borderRadius: 21,
+    backgroundColor: '#F4F4F4',
     flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 16,
+    padding: 3,
+    marginBottom: 18,
   },
 
-  modalPrimaryButtonText: {
-    marginLeft: 6,
+  scopeTab: {
+    flex: 1,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  scopeTabActive: {
+    backgroundColor: MAIN_COLOR,
+  },
+
+  scopeTabText: {
     fontFamily: fontFamily.medium,
     fontSize: fontSize.bodyM,
+    color: '#262626',
+  },
+
+  scopeTabTextActive: {
     color: '#FFFFFF',
   },
 
-  memberSelectRow: {
-    minHeight: 62,
+  membersWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 18,
+  },
+
+  memberChip: {
+    minHeight: 44,
     borderRadius: 22,
     backgroundColor: '#F7F7F7',
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    marginBottom: 8,
+    paddingLeft: 5,
+    paddingRight: 13,
   },
 
-  memberSelectAvatar: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+  memberChipActive: {
+    borderWidth: 1.5,
+    borderColor: MAIN_COLOR,
+    backgroundColor: '#F3ECFF',
+  },
+
+  memberChipAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#F3ECFF',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
+    marginRight: 8,
   },
 
-  memberSelectAvatarText: {
+  memberChipAvatarText: {
     fontFamily: fontFamily.medium,
     fontSize: fontSize.bodyM,
-    color: '#9456FE',
+    color: MAIN_COLOR,
   },
 
-  memberSelectName: {
-    flex: 1,
+  memberChipName: {
     fontFamily: fontFamily.medium,
     fontSize: fontSize.bodyM,
     color: '#262626',
   },
 
-  checkbox: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    borderWidth: 1.5,
-    borderColor: '#D8D8D8',
+  emptyMembersText: {
+    fontFamily: fontFamily.regular,
+    fontSize: fontSize.bodyM,
+    lineHeight: 21,
+    color: '#858585',
+    marginBottom: 18,
+  },
+
+  submitButton: {
+    minHeight: 56,
+    borderRadius: 22,
+    backgroundColor: MAIN_COLOR,
+    flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+
+  submitButtonText: {
+    marginLeft: 7,
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.bodyM,
+    color: '#FFFFFF',
   },
 });

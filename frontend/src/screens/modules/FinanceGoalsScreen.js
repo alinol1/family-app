@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -9,51 +9,118 @@ import {
   Pressable,
   TextInput,
   Alert,
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  LayoutAnimation,
+  UIManager,
 } from 'react-native';
 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 
 import { fontFamily, fontSize } from '../../utils/fonts';
 import { useLayout } from '../../utils/useLayout';
 
-const FAMILY_MEMBERS = [
-  { id: 1, name: 'Вы', initials: 'Я', color: '#F3ECFF' },
-  { id: 2, name: 'Мама', initials: 'М', color: '#DDF8EF' },
-  { id: 3, name: 'Папа', initials: 'П', color: '#EDE3FF' },
-  { id: 4, name: 'Анна', initials: 'А', color: '#FFE9DD' },
-];
+import {
+  getFinanceGoals,
+  getFinanceSpaceMembers,
+  createFinanceGoal,
+  completeFinanceGoal,
+} from '../../api/finance';
+
+if (
+  Platform.OS === 'android' &&
+  UIManager.setLayoutAnimationEnabledExperimental
+) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
+const MAIN_COLOR = '#9456FE';
+
+const getErrorMessage = (error, fallback = 'Произошла ошибка') => {
+  return (
+    error?.response?.data?.error ||
+    error?.response?.data?.detail ||
+    fallback
+  );
+};
+
+const toNumber = (value) => Number(value || 0);
+
+const normalizeMember = (member) => ({
+  id: member.id,
+  name: member.name || member.username || 'Участник',
+  initials: member.initials || (member.name || 'У').charAt(0).toUpperCase(),
+  avatarUrl: member.avatar_url || null,
+  isCurrentUser: Boolean(member.is_current_user),
+  isSelected: Boolean(member.is_selected),
+});
+
+const normalizeGoal = (goal) => ({
+  id: goal.id,
+  title: goal.title,
+  description: goal.description || '',
+  scope: goal.scope,
+  scopeTitle:
+    goal.scope_display ||
+    (goal.scope === 'family' ? 'Общая цель' : 'Личная цель'),
+  currentAmount: toNumber(goal.current_amount),
+  targetAmount: toNumber(goal.target_amount),
+  progressPercent: toNumber(goal.progress_percent),
+  isReadyToComplete: Boolean(goal.is_ready_to_complete),
+  status: goal.status,
+  completedAt: goal.completed_at,
+  members: (goal.members || []).map(normalizeMember),
+});
 
 export default function FinanceGoalsScreen({ navigation, route }) {
   const { screenPadding } = useLayout();
 
-  const initialGoals = route?.params?.goals || [];
-  const financeSpaceTitle = route?.params?.financeSpaceTitle || 'Финансовый блок';
-  const goalColor = route?.params?.color || '#9456FE';
+  const financeSpaceId = route?.params?.financeSpaceId;
+  const financeSpaceTitle = route?.params?.financeSpaceTitle || 'Финансовая ячейка';
 
-  const [goals, setGoals] = useState(initialGoals);
+  const [isLoading, setIsLoading] = useState(true);
+  const [activeGoals, setActiveGoals] = useState([]);
   const [completedGoals, setCompletedGoals] = useState([]);
+  const [spaceMembers, setSpaceMembers] = useState([]);
 
   const [isAddGoalModalVisible, setIsAddGoalModalVisible] = useState(false);
-  const [goalTitle, setGoalTitle] = useState('');
-  const [goalDescription, setGoalDescription] = useState('');
-  const [goalTargetAmount, setGoalTargetAmount] = useState('');
-  const [goalScope, setGoalScope] = useState('personal');
-  const [goalMembers, setGoalMembers] = useState(['Вы']);
+  const [newGoalTitle, setNewGoalTitle] = useState('');
+  const [newGoalAmount, setNewGoalAmount] = useState('');
+  const [newGoalDescription, setNewGoalDescription] = useState('');
+  const [newGoalScope, setNewGoalScope] = useState('personal');
+  const [newGoalMemberIds, setNewGoalMemberIds] = useState([]);
 
-  const activeGoals = useMemo(() => {
-    return goals.filter((goal) => !goal.isCompleted);
-  }, [goals]);
+  const personalGoals = useMemo(() => {
+    return activeGoals.filter((goal) => goal.scope === 'personal');
+  }, [activeGoals]);
 
-  const formatNumber = (value) => {
+  const familyGoals = useMemo(() => {
+    return activeGoals.filter((goal) => goal.scope === 'family');
+  }, [activeGoals]);
+
+  const formatNumber = (value, decimals = 0) => {
     const number = Number(value || 0);
+    const fixedValue = number.toFixed(decimals);
+    const [integerPart, decimalPart] = fixedValue.split('.');
 
-    return number
-      .toFixed(0)
-      .replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    const groupedInteger = integerPart.replace(
+      /\B(?=(\d{3})+(?!\d))/g,
+      '.'
+    );
+
+    if (decimals > 0) {
+      return `${groupedInteger},${decimalPart}`;
+    }
+
+    return groupedInteger;
+  };
+
+  const formatCurrency = (value) => {
+    return `${formatNumber(value)} ₽`;
   };
 
   const getGoalPercent = (goal) => {
@@ -61,27 +128,84 @@ export default function FinanceGoalsScreen({ navigation, route }) {
       return 0;
     }
 
-    const percent = Math.round(
-      (Number(goal.currentAmount || 0) / Number(goal.targetAmount || 0)) * 100
-    );
-
+    const percent = Math.round((goal.currentAmount / goal.targetAmount) * 100);
     return Math.min(percent, 100);
   };
+
+  const getMemberNames = (members) => {
+    if (!members || members.length === 0) {
+      return 'Без участников';
+    }
+
+    return members.map((member) => member.name).join(', ');
+  };
+
+  const formatCompletedDate = (value) => {
+    if (!value) {
+      return 'Сегодня';
+    }
+
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      return 'Сегодня';
+    }
+
+    return date.toLocaleDateString('ru-RU');
+  };
+
+  const loadGoals = useCallback(async () => {
+    if (!financeSpaceId) {
+      Alert.alert('Цели', 'Не передан идентификатор финансовой ячейки');
+      navigation.goBack();
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      const [activeGoalsData, completedGoalsData, membersData] =
+        await Promise.all([
+          getFinanceGoals(financeSpaceId, 'active'),
+          getFinanceGoals(financeSpaceId, 'completed'),
+          getFinanceSpaceMembers(financeSpaceId),
+        ]);
+
+      setActiveGoals((activeGoalsData || []).map(normalizeGoal));
+      setCompletedGoals((completedGoalsData || []).map(normalizeGoal));
+      setSpaceMembers((membersData || []).map(normalizeMember));
+    } catch (error) {
+      Alert.alert('Цели', getErrorMessage(error, 'Не удалось загрузить цели'));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [financeSpaceId, navigation]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadGoals();
+    }, [loadGoals])
+  );
 
   const openGoalDetail = (goal) => {
     navigation.navigate('FinanceGoalDetail', {
       goalId: goal.id,
+      financeSpaceId,
       financeSpaceTitle,
       goal,
     });
   };
 
   const openAddGoalModal = () => {
-    setGoalTitle('');
-    setGoalDescription('');
-    setGoalTargetAmount('');
-    setGoalScope('personal');
-    setGoalMembers(['Вы']);
+    const selectedMembers = spaceMembers
+      .filter((member) => member.isSelected)
+      .map((member) => member.id);
+
+    setNewGoalTitle('');
+    setNewGoalAmount('');
+    setNewGoalDescription('');
+    setNewGoalScope('personal');
+    setNewGoalMemberIds(selectedMembers);
     setIsAddGoalModalVisible(true);
   };
 
@@ -89,66 +213,80 @@ export default function FinanceGoalsScreen({ navigation, route }) {
     setIsAddGoalModalVisible(false);
   };
 
-  const toggleMember = (name) => {
-    setGoalMembers((prev) => {
-      if (prev.includes(name)) {
-        return prev.filter((item) => item !== name);
+  const changeNewGoalScope = (scope) => {
+    setNewGoalScope(scope);
+
+    if (scope === 'personal') {
+      setNewGoalMemberIds([]);
+      return;
+    }
+
+    const selectedMembers = spaceMembers
+      .filter((member) => member.isSelected)
+      .map((member) => member.id);
+
+    setNewGoalMemberIds(selectedMembers);
+  };
+
+  const toggleNewGoalMember = (memberId) => {
+    setNewGoalMemberIds((prev) => {
+      if (prev.includes(memberId)) {
+        return prev.filter((id) => id !== memberId);
       }
 
-      return [...prev, name];
+      return [...prev, memberId];
     });
   };
 
-  const completeGoal = (goal) => {
-    const completedGoal = {
-      ...goal,
-      isCompleted: true,
-      completedAt: 'Сегодня',
-    };
+  const submitNewGoal = async () => {
+    const title = newGoalTitle.trim();
+    const targetAmount = Number(newGoalAmount.replace(/\s/g, '').replace(',', '.'));
 
-    setGoals((prev) => prev.filter((item) => item.id !== goal.id));
-    setCompletedGoals((prev) => [completedGoal, ...prev]);
-  };
-
-  const addGoal = () => {
-    const trimmedTitle = goalTitle.trim();
-    const targetAmount = Number(goalTargetAmount.replace(/\s/g, '').replace(',', '.'));
-
-    if (!trimmedTitle) {
+    if (!title) {
       Alert.alert('Новая цель', 'Введите название цели');
       return;
     }
 
     if (!targetAmount || targetAmount <= 0) {
-      Alert.alert('Новая цель', 'Введите корректную сумму цели');
+      Alert.alert('Новая цель', 'Введите корректную сумму');
       return;
     }
 
-    if (goalScope === 'family' && goalMembers.length === 0) {
-      Alert.alert('Новая цель', 'Выберите хотя бы одного участника');
+    if (newGoalScope === 'family' && newGoalMemberIds.length === 0) {
+      Alert.alert('Новая цель', 'Выберите участников цели');
       return;
     }
 
-    const newGoal = {
-      id: Date.now(),
-      title: trimmedTitle,
-      description: goalDescription.trim() || 'Описание цели пока не добавлено.',
-      scope: goalScope,
-      scopeTitle: goalScope === 'family' ? 'Общая цель' : 'Личная цель',
-      members: goalScope === 'family' ? goalMembers : ['Вы'],
-      currentAmount: 0,
-      targetAmount,
-      color: goalColor,
-      isCompleted: false,
-    };
+    try {
+      await createFinanceGoal({
+        spaceId: financeSpaceId,
+        title,
+        description: newGoalDescription.trim(),
+        scope: newGoalScope,
+        targetAmount,
+        memberIds: newGoalScope === 'family' ? newGoalMemberIds : [],
+      });
 
-    setGoals((prev) => [newGoal, ...prev]);
-    closeAddGoalModal();
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      closeAddGoalModal();
+      await loadGoals();
+    } catch (error) {
+      Alert.alert('Новая цель', getErrorMessage(error, 'Не удалось добавить цель'));
+    }
   };
 
-  const renderGoalProgress = (goal) => {
-    const percent = getGoalPercent(goal);
-    const isReadyToComplete = percent >= 100 && !goal.isCompleted;
+  const finishGoal = async (goal) => {
+    try {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      await completeFinanceGoal(financeSpaceId, goal.id);
+      await loadGoals();
+    } catch (error) {
+      Alert.alert('Цель', getErrorMessage(error, 'Не удалось перенести цель в выполненные'));
+    }
+  };
+
+  const renderGoalProgress = (goal, isCompleted = false) => {
+    const percent = isCompleted ? 100 : getGoalPercent(goal);
 
     return (
       <View style={styles.progressTrack}>
@@ -157,7 +295,6 @@ export default function FinanceGoalsScreen({ navigation, route }) {
             styles.progressFill,
             {
               width: `${percent}%`,
-              backgroundColor: isReadyToComplete ? '#10B981' : goal.color || goalColor,
             },
           ]}
         />
@@ -171,7 +308,7 @@ export default function FinanceGoalsScreen({ navigation, route }) {
 
   const renderGoalCard = (goal) => {
     const percent = getGoalPercent(goal);
-    const isReadyToComplete = percent >= 100 && !goal.isCompleted;
+    const isReadyToComplete = percent >= 100 || goal.isReadyToComplete;
 
     return (
       <TouchableOpacity
@@ -182,28 +319,34 @@ export default function FinanceGoalsScreen({ navigation, route }) {
       >
         <View style={styles.goalTopRow}>
           <View style={styles.goalLeft}>
-            <View
-              style={[
-                styles.goalIcon,
-                {
-                  backgroundColor: isReadyToComplete ? '#10B981' : goal.color || goalColor,
-                },
-              ]}
-            >
+            <View style={styles.goalIcon}>
               <Ionicons
                 name={isReadyToComplete ? 'checkmark-outline' : 'flag-outline'}
-                size={20}
+                size={21}
                 color="#FFFFFF"
               />
             </View>
 
             <View style={styles.goalTextBlock}>
-              <Text style={styles.goalTitle} allowFontScaling={false} numberOfLines={1}>
+              <Text
+                style={styles.goalTitle}
+                allowFontScaling={false}
+                numberOfLines={1}
+              >
                 {goal.title}
               </Text>
 
-              <Text style={styles.goalMeta} allowFontScaling={false} numberOfLines={1}>
-                {goal.scopeTitle} · {goal.members.join(', ')}
+              <Text
+                style={[
+                  styles.goalMeta,
+                  isReadyToComplete && styles.goalMetaCompleted,
+                ]}
+                allowFontScaling={false}
+                numberOfLines={1}
+              >
+                {isReadyToComplete
+                  ? 'Цель выполнена!'
+                  : `${goal.scopeTitle} · ${getMemberNames(goal.members)}`}
               </Text>
             </View>
           </View>
@@ -212,7 +355,10 @@ export default function FinanceGoalsScreen({ navigation, route }) {
             <TouchableOpacity
               style={styles.completeButton}
               activeOpacity={0.8}
-              onPress={() => completeGoal(goal)}
+              onPress={(event) => {
+                event?.stopPropagation?.();
+                finishGoal(goal);
+              }}
             >
               <Ionicons name="checkmark" size={18} color="#FFFFFF" />
             </TouchableOpacity>
@@ -223,10 +369,10 @@ export default function FinanceGoalsScreen({ navigation, route }) {
 
         {isReadyToComplete && (
           <View style={styles.completedReadyBadge}>
-            <Ionicons name="sparkles-outline" size={16} color="#10B981" />
+            <Ionicons name="sparkles-outline" size={16} color={MAIN_COLOR} />
 
             <Text style={styles.completedReadyText} allowFontScaling={false}>
-              Цель выполнена! Нажмите на галочку, чтобы перенести её в выполненные.
+              Нажмите на галочку, чтобы перенести цель в выполненные.
             </Text>
           </View>
         )}
@@ -246,16 +392,24 @@ export default function FinanceGoalsScreen({ navigation, route }) {
       <View style={styles.goalTopRow}>
         <View style={styles.goalLeft}>
           <View style={styles.completedGoalIcon}>
-            <Ionicons name="checkmark-outline" size={20} color="#FFFFFF" />
+            <Ionicons name="checkmark-outline" size={21} color="#FFFFFF" />
           </View>
 
           <View style={styles.goalTextBlock}>
-            <Text style={styles.goalTitle} allowFontScaling={false} numberOfLines={1}>
+            <Text
+              style={styles.goalTitle}
+              allowFontScaling={false}
+              numberOfLines={1}
+            >
               {goal.title}
             </Text>
 
-            <Text style={styles.goalMeta} allowFontScaling={false} numberOfLines={1}>
-              Выполнено · {goal.completedAt || 'Сегодня'}
+            <Text
+              style={styles.goalMeta}
+              allowFontScaling={false}
+              numberOfLines={1}
+            >
+              Выполнено · {formatCompletedDate(goal.completedAt)}
             </Text>
           </View>
         </View>
@@ -263,29 +417,54 @@ export default function FinanceGoalsScreen({ navigation, route }) {
         <Ionicons name="chevron-forward" size={21} color="#B8B8B8" />
       </View>
 
-      <Text style={styles.completedGoalText} allowFontScaling={false}>
-        Цель выполнена 🎉
-      </Text>
+      <View style={styles.completedTextRow}>
+        <Ionicons name="sparkles-outline" size={16} color={MAIN_COLOR} />
+
+        <Text style={styles.completedGoalText} allowFontScaling={false}>
+          Цель выполнена
+        </Text>
+      </View>
+
+      {renderGoalProgress(goal, true)}
     </TouchableOpacity>
   );
+
+  const renderGoalSection = (title, sectionGoals) => {
+    if (sectionGoals.length === 0) {
+      return null;
+    }
+
+    return (
+      <View>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle} allowFontScaling={false}>
+            {title}
+          </Text>
+
+          <Text style={styles.sectionCount} allowFontScaling={false}>
+            {sectionGoals.length}
+          </Text>
+        </View>
+
+        {sectionGoals.map(renderGoalCard)}
+      </View>
+    );
+  };
 
   const renderScopeTabs = () => (
     <View style={styles.scopeTabs}>
       <TouchableOpacity
         style={[
           styles.scopeTab,
-          goalScope === 'personal' && styles.scopeTabActive,
+          newGoalScope === 'personal' && styles.scopeTabActive,
         ]}
         activeOpacity={0.85}
-        onPress={() => {
-          setGoalScope('personal');
-          setGoalMembers(['Вы']);
-        }}
+        onPress={() => changeNewGoalScope('personal')}
       >
         <Text
           style={[
             styles.scopeTabText,
-            goalScope === 'personal' && styles.scopeTabTextActive,
+            newGoalScope === 'personal' && styles.scopeTabTextActive,
           ]}
           allowFontScaling={false}
         >
@@ -296,15 +475,15 @@ export default function FinanceGoalsScreen({ navigation, route }) {
       <TouchableOpacity
         style={[
           styles.scopeTab,
-          goalScope === 'family' && styles.scopeTabActive,
+          newGoalScope === 'family' && styles.scopeTabActive,
         ]}
         activeOpacity={0.85}
-        onPress={() => setGoalScope('family')}
+        onPress={() => changeNewGoalScope('family')}
       >
         <Text
           style={[
             styles.scopeTabText,
-            goalScope === 'family' && styles.scopeTabTextActive,
+            newGoalScope === 'family' && styles.scopeTabTextActive,
           ]}
           allowFontScaling={false}
         >
@@ -315,50 +494,51 @@ export default function FinanceGoalsScreen({ navigation, route }) {
   );
 
   const renderMembersPicker = () => {
-    if (goalScope !== 'family') {
+    if (newGoalScope !== 'family') {
       return null;
     }
+
+    const availableMembers = spaceMembers.filter((member) => member.isSelected);
 
     return (
       <>
         <Text style={styles.inputLabel} allowFontScaling={false}>
-          Участники
+          Участники цели
         </Text>
 
-        <View style={styles.membersSelectWrap}>
-          {FAMILY_MEMBERS.map((member) => {
-            const isSelected = goalMembers.includes(member.name);
+        {availableMembers.length === 0 ? (
+          <Text style={styles.emptyMembersText} allowFontScaling={false}>
+            Сначала добавьте участников в настройках финансовой ячейки.
+          </Text>
+        ) : (
+          <View style={styles.membersWrap}>
+            {availableMembers.map((member) => {
+              const isSelected = newGoalMemberIds.includes(member.id);
 
-            return (
-              <TouchableOpacity
-                key={member.id}
-                style={[
-                  styles.memberSelectChip,
-                  isSelected && styles.memberSelectChipActive,
-                ]}
-                activeOpacity={0.75}
-                onPress={() => toggleMember(member.name)}
-              >
-                <View
+              return (
+                <TouchableOpacity
+                  key={member.id}
                   style={[
-                    styles.memberSelectAvatar,
-                    {
-                      backgroundColor: member.color,
-                    },
+                    styles.memberChip,
+                    isSelected && styles.memberChipActive,
                   ]}
+                  activeOpacity={0.75}
+                  onPress={() => toggleNewGoalMember(member.id)}
                 >
-                  <Text style={styles.memberSelectAvatarText} allowFontScaling={false}>
-                    {member.initials}
-                  </Text>
-                </View>
+                  <View style={styles.memberAvatar}>
+                    <Text style={styles.memberAvatarText} allowFontScaling={false}>
+                      {member.initials}
+                    </Text>
+                  </View>
 
-                <Text style={styles.memberSelectName} allowFontScaling={false}>
-                  {member.name}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+                  <Text style={styles.memberName} allowFontScaling={false}>
+                    {member.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
       </>
     );
   };
@@ -399,13 +579,13 @@ export default function FinanceGoalsScreen({ navigation, route }) {
               {renderScopeTabs()}
 
               <Text style={styles.inputLabel} allowFontScaling={false}>
-                Название
+                Название цели
               </Text>
 
               <TextInput
                 style={styles.textInput}
-                value={goalTitle}
-                onChangeText={setGoalTitle}
+                value={newGoalTitle}
+                onChangeText={setNewGoalTitle}
                 placeholder="Название цели"
                 placeholderTextColor="#A1A1A1"
               />
@@ -416,8 +596,8 @@ export default function FinanceGoalsScreen({ navigation, route }) {
 
               <TextInput
                 style={styles.textInput}
-                value={goalTargetAmount}
-                onChangeText={setGoalTargetAmount}
+                value={newGoalAmount}
+                onChangeText={setNewGoalAmount}
                 keyboardType="numeric"
                 placeholder="Сумма"
                 placeholderTextColor="#A1A1A1"
@@ -429,8 +609,8 @@ export default function FinanceGoalsScreen({ navigation, route }) {
 
               <TextInput
                 style={styles.descriptionInput}
-                value={goalDescription}
-                onChangeText={setGoalDescription}
+                value={newGoalDescription}
+                onChangeText={setNewGoalDescription}
                 multiline
                 textAlignVertical="top"
                 placeholder="Краткое описание цели"
@@ -440,18 +620,13 @@ export default function FinanceGoalsScreen({ navigation, route }) {
               {renderMembersPicker()}
 
               <TouchableOpacity
-                style={[
-                  styles.addGoalSubmitButton,
-                  {
-                    backgroundColor: goalColor,
-                  },
-                ]}
+                style={styles.submitButton}
                 activeOpacity={0.85}
-                onPress={addGoal}
+                onPress={submitNewGoal}
               >
                 <Ionicons name="add" size={21} color="#FFFFFF" />
 
-                <Text style={styles.addGoalSubmitText} allowFontScaling={false}>
+                <Text style={styles.submitButtonText} allowFontScaling={false}>
                   Добавить цель
                 </Text>
               </TouchableOpacity>
@@ -461,6 +636,22 @@ export default function FinanceGoalsScreen({ navigation, route }) {
       </KeyboardAvoidingView>
     </Modal>
   );
+
+  if (isLoading) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={['top']}>
+        <StatusBar style="dark" />
+
+        <View style={styles.loadingWrapper}>
+          <ActivityIndicator size="large" color={MAIN_COLOR} />
+
+          <Text style={styles.loadingText} allowFontScaling={false}>
+            Загружаем цели...
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -484,7 +675,7 @@ export default function FinanceGoalsScreen({ navigation, route }) {
             activeOpacity={0.75}
             onPress={openAddGoalModal}
           >
-            <Ionicons name="add" size={23} color="#9456FE" />
+            <Ionicons name="add" size={23} color={MAIN_COLOR} />
           </TouchableOpacity>
         </View>
 
@@ -499,7 +690,7 @@ export default function FinanceGoalsScreen({ navigation, route }) {
 
             <View style={styles.introTextBlock}>
               <Text style={styles.introTitle} allowFontScaling={false}>
-                Цели блока
+                Цели ячейки
               </Text>
 
               <Text style={styles.introSubtitle} allowFontScaling={false}>
@@ -508,19 +699,11 @@ export default function FinanceGoalsScreen({ navigation, route }) {
             </View>
           </View>
 
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle} allowFontScaling={false}>
-              Активные цели
-            </Text>
-
-            <Text style={styles.sectionCount} allowFontScaling={false}>
-              {activeGoals.length}
-            </Text>
-          </View>
-
           {activeGoals.length === 0 ? (
             <View style={styles.emptyCard}>
-              <Ionicons name="flag-outline" size={26} color="#9456FE" />
+              <View style={styles.emptyIcon}>
+                <Ionicons name="flag-outline" size={27} color={MAIN_COLOR} />
+              </View>
 
               <Text style={styles.emptyTitle} allowFontScaling={false}>
                 Активных целей пока нет
@@ -529,27 +712,37 @@ export default function FinanceGoalsScreen({ navigation, route }) {
               <Text style={styles.emptyText} allowFontScaling={false}>
                 Добавьте цель, чтобы отслеживать накопления и прогресс.
               </Text>
+
+              <TouchableOpacity
+                style={styles.emptyAddButton}
+                activeOpacity={0.85}
+                onPress={openAddGoalModal}
+              >
+                <Ionicons name="add" size={20} color="#FFFFFF" />
+
+                <Text style={styles.emptyAddButtonText} allowFontScaling={false}>
+                  Добавить цель
+                </Text>
+              </TouchableOpacity>
             </View>
           ) : (
-            activeGoals.map(renderGoalCard)
+            <>
+              {renderGoalSection('Личные цели', personalGoals)}
+              {renderGoalSection('Общие цели семьи', familyGoals)}
+
+              <TouchableOpacity
+                style={styles.mainAddButton}
+                activeOpacity={0.85}
+                onPress={openAddGoalModal}
+              >
+                <Ionicons name="add" size={22} color="#FFFFFF" />
+
+                <Text style={styles.mainAddButtonText} allowFontScaling={false}>
+                  Добавить цель
+                </Text>
+              </TouchableOpacity>
+            </>
           )}
-
-          <TouchableOpacity
-            style={[
-              styles.addGoalButton,
-              {
-                backgroundColor: goalColor,
-              },
-            ]}
-            activeOpacity={0.85}
-            onPress={openAddGoalModal}
-          >
-            <Ionicons name="add" size={22} color="#FFFFFF" />
-
-            <Text style={styles.addGoalButtonText} allowFontScaling={false}>
-              Добавить цель
-            </Text>
-          </TouchableOpacity>
 
           <View style={styles.completedSection}>
             <View style={styles.sectionHeader}>
@@ -589,6 +782,19 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
+  },
+
+  loadingWrapper: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  loadingText: {
+    marginTop: 12,
+    fontFamily: fontFamily.regular,
+    fontSize: fontSize.bodyM,
+    color: '#858585',
   },
 
   header: {
@@ -634,7 +840,7 @@ const styles = StyleSheet.create({
     width: 52,
     height: 52,
     borderRadius: 26,
-    backgroundColor: '#9456FE',
+    backgroundColor: MAIN_COLOR,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 14,
@@ -674,7 +880,7 @@ const styles = StyleSheet.create({
   sectionCount: {
     fontFamily: fontFamily.medium,
     fontSize: fontSize.bodyM,
-    color: '#9456FE',
+    color: MAIN_COLOR,
   },
 
   goalCard: {
@@ -690,7 +896,7 @@ const styles = StyleSheet.create({
     padding: 18,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#E8FAF3',
+    borderColor: '#F3ECFF',
   },
 
   goalTopRow: {
@@ -710,6 +916,7 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 21,
+    backgroundColor: MAIN_COLOR,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -719,7 +926,7 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor: '#10B981',
+    backgroundColor: MAIN_COLOR,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -742,11 +949,16 @@ const styles = StyleSheet.create({
     color: '#858585',
   },
 
+  goalMetaCompleted: {
+    color: MAIN_COLOR,
+    fontFamily: fontFamily.medium,
+  },
+
   completeButton: {
     width: 34,
     height: 34,
     borderRadius: 17,
-    backgroundColor: '#10B981',
+    backgroundColor: MAIN_COLOR,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -755,7 +967,7 @@ const styles = StyleSheet.create({
     marginTop: 14,
     minHeight: 42,
     borderRadius: 21,
-    backgroundColor: '#E8FAF3',
+    backgroundColor: '#F3ECFF',
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
@@ -766,7 +978,7 @@ const styles = StyleSheet.create({
     marginLeft: 7,
     fontFamily: fontFamily.medium,
     fontSize: fontSize.caption,
-    color: '#10B981',
+    color: MAIN_COLOR,
   },
 
   progressTrack: {
@@ -785,6 +997,7 @@ const styles = StyleSheet.create({
     top: 0,
     bottom: 0,
     borderRadius: 18,
+    backgroundColor: MAIN_COLOR,
   },
 
   progressText: {
@@ -794,16 +1007,23 @@ const styles = StyleSheet.create({
     color: '#262626',
   },
 
-  completedGoalText: {
+  completedTextRow: {
     marginTop: 12,
-    fontFamily: fontFamily.medium,
-    fontSize: fontSize.bodyM,
-    color: '#10B981',
+    flexDirection: 'row',
+    alignItems: 'center',
   },
 
-  addGoalButton: {
+  completedGoalText: {
+    marginLeft: 6,
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.bodyM,
+    color: MAIN_COLOR,
+  },
+
+  mainAddButton: {
     height: 56,
     borderRadius: 22,
+    backgroundColor: MAIN_COLOR,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
@@ -811,7 +1031,7 @@ const styles = StyleSheet.create({
     marginBottom: 22,
   },
 
-  addGoalButtonText: {
+  mainAddButtonText: {
     marginLeft: 7,
     fontFamily: fontFamily.medium,
     fontSize: fontSize.bodyM,
@@ -827,11 +1047,20 @@ const styles = StyleSheet.create({
     backgroundColor: '#F7F7F7',
     alignItems: 'center',
     padding: 22,
+    marginBottom: 22,
+  },
+
+  emptyIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: '#F3ECFF',
+    justifyContent: 'center',
+    alignItems: 'center',
     marginBottom: 12,
   },
 
   emptyTitle: {
-    marginTop: 10,
     fontFamily: fontFamily.medium,
     fontSize: fontSize.bodyL,
     color: '#262626',
@@ -844,6 +1073,23 @@ const styles = StyleSheet.create({
     fontSize: fontSize.caption,
     lineHeight: 18,
     color: '#858585',
+  },
+
+  emptyAddButton: {
+    marginTop: 18,
+    height: 46,
+    borderRadius: 19,
+    backgroundColor: MAIN_COLOR,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+  },
+
+  emptyAddButtonText: {
+    marginLeft: 7,
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.bodyM,
+    color: '#FFFFFF',
   },
 
   emptyCompletedCard: {
@@ -931,7 +1177,7 @@ const styles = StyleSheet.create({
   },
 
   scopeTabActive: {
-    backgroundColor: '#9456FE',
+    backgroundColor: MAIN_COLOR,
   },
 
   scopeTabText: {
@@ -975,14 +1221,14 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
 
-  membersSelectWrap: {
+  membersWrap: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
     marginBottom: 18,
   },
 
-  memberSelectChip: {
+  memberChip: {
     minHeight: 44,
     borderRadius: 22,
     backgroundColor: '#F7F7F7',
@@ -992,42 +1238,52 @@ const styles = StyleSheet.create({
     paddingRight: 13,
   },
 
-  memberSelectChipActive: {
+  memberChipActive: {
     borderWidth: 1.5,
-    borderColor: '#9456FE',
+    borderColor: MAIN_COLOR,
     backgroundColor: '#F3ECFF',
   },
 
-  memberSelectAvatar: {
+  memberAvatar: {
     width: 34,
     height: 34,
     borderRadius: 17,
+    backgroundColor: '#F3ECFF',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 8,
   },
 
-  memberSelectAvatarText: {
+  memberAvatarText: {
     fontFamily: fontFamily.medium,
     fontSize: fontSize.bodyM,
-    color: '#9456FE',
+    color: MAIN_COLOR,
   },
 
-  memberSelectName: {
+  memberName: {
     fontFamily: fontFamily.medium,
     fontSize: fontSize.bodyM,
     color: '#262626',
   },
 
-  addGoalSubmitButton: {
+  emptyMembersText: {
+    fontFamily: fontFamily.regular,
+    fontSize: fontSize.bodyM,
+    lineHeight: 21,
+    color: '#858585',
+    marginBottom: 18,
+  },
+
+  submitButton: {
     minHeight: 56,
     borderRadius: 22,
+    backgroundColor: MAIN_COLOR,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
   },
 
-  addGoalSubmitText: {
+  submitButtonText: {
     marginLeft: 7,
     fontFamily: fontFamily.medium,
     fontSize: fontSize.bodyM,
