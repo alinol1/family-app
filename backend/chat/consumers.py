@@ -4,14 +4,10 @@ from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 
 from .models import Chat, Message
-from .serializers import MessageSerializer
+from .serializers import MessageSerializer, ChatSerializer
 
 
 def get_user_family(user):
-    """
-    Возвращает семью пользователя.
-    Если пользователь не состоит в семье — возвращает None.
-    """
     if not hasattr(user, 'family_membership'):
         return None
 
@@ -131,6 +127,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
             text=text
         )
 
+        chat.save(update_fields=['updated_at'])
+
         serializer = MessageSerializer(message)
         return serializer.data
 
@@ -152,44 +150,25 @@ class ChatConsumer(AsyncWebsocketConsumer):
         except Chat.DoesNotExist:
             return []
 
-        last_message = chat.messages.order_by('created_at').last()
-
         updates = []
 
         for user in chat.members.all():
-            unread_count = chat.messages.filter(
-                is_read=False
-            ).exclude(
-                sender=user
-            ).count()
-
-            if chat.chat_type == 'family':
-                chat_name = chat.family.name
-            else:
-                other_user = chat.members.exclude(id=user.id).first()
-
-                chat_name = (
-                    f'{other_user.first_name} {other_user.last_name}'.strip()
-                    if other_user
-                    else 'Личный чат'
-                )
+            serializer = ChatSerializer(
+                chat,
+                context={
+                    'request': type(
+                        'Request',
+                        (),
+                        {
+                            'user': user
+                        }
+                    )()
+                }
+            )
 
             updates.append({
                 'user_id': user.id,
-                'chat': {
-                    'id': chat.id,
-                    'chat_type': chat.chat_type,
-                    'family': chat.family.id if chat.family else None,
-                    'chat_name': chat_name,
-                    'members_count': chat.members.count(),
-                    'unread_count': unread_count,
-                    'last_message': {
-                        'text': last_message.text,
-                        'sender': last_message.sender.first_name,
-                        'created_at': last_message.created_at.isoformat(),
-                    } if last_message else None,
-                    'created_at': chat.created_at.isoformat(),
-                }
+                'chat': serializer.data,
             })
 
         return updates

@@ -1,17 +1,20 @@
 from django.urls import path
+
 from .views import (
     FamilyTreeView,
-    AddFamilyTreeNodeView,
-    FamilyTreeNodeDetailView,
+    FamilyTreePersonCreateView,
+    FamilyTreePersonDetailView,
+    FamilyTreePersonPhotoView,
+    FamilyTreeAddRelativeView,
+    FamilyTreePersonalLabelView,
 )
 
 urlpatterns = [
-    # Всё древо
     path('', FamilyTreeView.as_view(), name='family_tree'),
 
-    # Добавить элемент
-    path('add/', AddFamilyTreeNodeView.as_view(), name='add_node'),
-
-    # Просмотр, редактирование, удаление
-    path('<int:node_id>/', FamilyTreeNodeDetailView.as_view(), name='node_detail'),
+    path('persons/', FamilyTreePersonCreateView.as_view(), name='tree_person_create'),
+    path('persons/<int:person_id>/', FamilyTreePersonDetailView.as_view(), name='tree_person_detail'),
+    path('persons/<int:person_id>/photo/', FamilyTreePersonPhotoView.as_view(), name='tree_person_photo'),
+    path('persons/<int:person_id>/add-relative/', FamilyTreeAddRelativeView.as_view(), name='tree_person_add_relative'),
+    path('persons/<int:person_id>/label/', FamilyTreePersonalLabelView.as_view(), name='tree_person_label'),
 ]
