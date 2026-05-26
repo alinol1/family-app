@@ -13,9 +13,11 @@ import { fontFamily } from '../utils/fonts';
 import { getProfile } from '../api/auth';
 import { getAccessToken } from '../api/tokenStorage';
 
-const WS_BASE_URL = Platform.OS === 'web'
-  ? 'ws://127.0.0.1:8000'
-  : 'ws://192.168.3.2:8000';
+import { WS_BASE_URL } from '../../config/api';
+
+const socket = new WebSocket(
+  `${WS_BASE_URL}/ws/chat/${chatId}/?token=${token}`
+);
 
 // Для VPS потом заменим на:
 // const WS_BASE_URL = 'wss://api.mayak-family.ru';

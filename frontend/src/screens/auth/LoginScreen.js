@@ -83,7 +83,11 @@ export default function LoginScreen({ navigation }) {
 
     try {
       await login(email.trim().toLowerCase(), password);
-      navigation.replace('MainTabs');
+
+      navigation.reset({
+        index: 0,
+        routes: [{ name: 'MainTabs' }],
+      });
     } catch (error) {
       const errorData = error.response?.data;
       console.log('Ошибка входа:', JSON.stringify(errorData));
@@ -201,18 +205,7 @@ export default function LoginScreen({ navigation }) {
 
         </ScrollView>
 
-          {/* ВРЕМЕННО: быстрый вход */}
-          <TouchableOpacity
-            style={styles.tempButton}
-            activeOpacity={0.7}
-            onPress={() => navigation.replace('MainTabs')}
-            
-          >
-            <Text style={styles.tempButtonText} allowFontScaling={false}>
-              Зайти (временно)
-            </Text>
-            
-          </TouchableOpacity>
+
 
         {/* Нет аккаунта — прижато к низу */}
         <View style={[styles.linkContainer, { paddingHorizontal: screenPadding }]}>
@@ -334,9 +327,5 @@ const styles = StyleSheet.create({
     color: '#9456FE',
   },
 
-  tempButtonText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
+
 });

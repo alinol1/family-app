@@ -3,6 +3,8 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from .views import FamilyPresenceView
 from .views import UserMedicalInfoView
 from .views import UserAvatarView
+
+from .views import DeleteAccountView
 from .views import (
     RegisterView,
     LoginView,
@@ -32,4 +34,5 @@ urlpatterns = [
     path('medical-info/<int:user_id>/', UserMedicalInfoView.as_view(), name='user_medical_info'),
 
     path('profile/avatar/', UserAvatarView.as_view(), name='profile_avatar'),
+    path('account/', DeleteAccountView.as_view(), name='delete_account'),
 ]

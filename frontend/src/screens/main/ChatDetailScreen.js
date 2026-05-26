@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -10,37 +10,100 @@ import {
   Platform,
   ActivityIndicator,
   Alert,
+  Image,
 } from 'react-native';
 
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 
 import { fontFamily, fontSize } from '../../utils/fonts';
 import { useLayout } from '../../utils/useLayout';
-import { getMessages } from '../../api/chat';
+import { getMessages, getChat } from '../../api/chat';
 import { getProfile } from '../../api/auth';
 import { getAccessToken } from '../../api/tokenStorage';
 
-const WS_BASE_URL = 'ws://192.168.3.2:8000';
+import { WS_BASE_URL } from '../../config/api';
 
-// Для VPS потом заменим на:
-// const WS_BASE_URL = 'wss://api.mayak-family.ru';
+const MAIN_COLOR = '#9456FE';
+
+function getApiErrorMessage(error) {
+  const data = error?.response?.data;
+
+  if (!data) {
+    return 'Не удалось выполнить действие. Проверьте подключение к серверу.';
+  }
+
+  if (typeof data === 'string') return data;
+  if (data.error) return data.error;
+  if (data.detail) return data.detail;
+
+  const firstKey = Object.keys(data)[0];
+  const firstValue = firstKey ? data[firstKey] : null;
+
+  if (Array.isArray(firstValue)) return firstValue[0];
+  if (typeof firstValue === 'string') return firstValue;
+
+  return 'Сервер вернул ошибку.';
+}
+
+function formatTime(dateString) {
+  if (!dateString) return '';
+
+  return new Date(dateString).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function formatMembersCount(count) {
+  const number = Number(count) || 0;
+  const lastDigit = number % 10;
+  const lastTwoDigits = number % 100;
+
+  if (lastTwoDigits >= 11 && lastTwoDigits <= 14) {
+    return `${number} участников`;
+  }
+
+  if (lastDigit === 1) {
+    return `${number} участник`;
+  }
+
+  if (lastDigit >= 2 && lastDigit <= 4) {
+    return `${number} участника`;
+  }
+
+  return `${number} участников`;
+}
 
 export default function ChatDetailScreen({ navigation, route }) {
   const { screenPadding } = useLayout();
   const insets = useSafeAreaInsets();
+
   const flatListRef = useRef(null);
   const socketRef = useRef(null);
 
   const {
     chatId,
-    chatName,
-    chatType,
-    membersCount = 0,
+    chatName: initialChatName,
+    chatType: initialChatType,
+    membersCount: initialMembersCount = 0,
+    chatSubtitle: initialChatSubtitle = '',
+    isPinned: initialIsPinned = false,
+    isMainFamilyChat: initialIsMainFamilyChat = false,
   } = route.params;
 
-  const isFamilyChat = chatType === 'family';
+  const [chatInfo, setChatInfo] = useState({
+    chatName: initialChatName,
+    chatType: initialChatType,
+    membersCount: initialMembersCount,
+    chatSubtitle: initialChatSubtitle,
+    isPinned: initialIsPinned,
+    isMainFamilyChat: initialIsMainFamilyChat,
+  });
+
+  const isFamilyChat = chatInfo.chatType === 'family';
 
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
@@ -48,42 +111,13 @@ export default function ChatDetailScreen({ navigation, route }) {
   const [loading, setLoading] = useState(true);
   const [socketConnected, setSocketConnected] = useState(false);
 
-  const formatTime = (dateString) => {
-    if (!dateString) return '';
-
-    return new Date(dateString).toLocaleTimeString([], {
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
-
-  const formatMembersCount = (count) => {
-    const number = Number(count) || 0;
-    const lastDigit = number % 10;
-    const lastTwoDigits = number % 100;
-
-    if (lastTwoDigits >= 11 && lastTwoDigits <= 14) {
-      return `${number} участников`;
-    }
-
-    if (lastDigit === 1) {
-      return `${number} участник`;
-    }
-
-    if (lastDigit >= 2 && lastDigit <= 4) {
-      return `${number} участника`;
-    }
-
-    return `${number} участников`;
-  };
-
-  const scrollToBottom = () => {
+  const scrollToBottom = useCallback(() => {
     setTimeout(() => {
       flatListRef.current?.scrollToEnd({ animated: true });
     }, 100);
-  };
+  }, []);
 
-  const connectWebSocket = async () => {
+  const connectWebSocket = useCallback(async () => {
     const token = await getAccessToken();
 
     if (!token) {
@@ -132,14 +166,33 @@ export default function ChatDetailScreen({ navigation, route }) {
         socketRef.current = null;
       }
     };
-  };
+  }, [chatId, scrollToBottom]);
 
-  const loadData = async () => {
+  const loadChatInfo = useCallback(async () => {
+    try {
+      const chat = await getChat(chatId);
+
+      setChatInfo({
+        chatName: chat.chat_name,
+        chatType: chat.chat_type,
+        membersCount: chat.members_count || 0,
+        chatSubtitle: chat.chat_subtitle || '',
+        isPinned: chat.is_pinned,
+        isMainFamilyChat: chat.is_main_family_chat,
+      });
+    } catch (error) {
+      console.log('Ошибка обновления информации чата:', error.response?.data || error);
+    }
+  }, [chatId]);
+
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
 
       const profile = await getProfile();
       setCurrentUserId(profile.id);
+
+      await loadChatInfo();
 
       const data = await getMessages(chatId);
       setMessages(data || []);
@@ -147,11 +200,11 @@ export default function ChatDetailScreen({ navigation, route }) {
       await connectWebSocket();
     } catch (error) {
       console.log('Ошибка загрузки чата:', error.response?.data || error);
-      Alert.alert('Ошибка', 'Не удалось загрузить чат');
+      Alert.alert('Ошибка', getApiErrorMessage(error));
     } finally {
       setLoading(false);
     }
-  };
+  }, [chatId, connectWebSocket, loadChatInfo]);
 
   useEffect(() => {
     loadData();
@@ -160,9 +213,15 @@ export default function ChatDetailScreen({ navigation, route }) {
       socketRef.current?.close();
       socketRef.current = null;
     };
-  }, [chatId]);
+  }, [loadData]);
 
-  const handleSend = () => {
+  useFocusEffect(
+    useCallback(() => {
+      loadChatInfo();
+    }, [loadChatInfo])
+  );
+
+  const handleSend = useCallback(() => {
     const trimmedText = text.trim();
 
     if (!trimmedText) return;
@@ -179,7 +238,16 @@ export default function ChatDetailScreen({ navigation, route }) {
     );
 
     setText('');
-  };
+  }, [text]);
+
+  const openSettings = useCallback(() => {
+    navigation.navigate('ChatSettings', {
+      chatId,
+      chatType: chatInfo.chatType,
+      chatName: chatInfo.chatName,
+      isMainFamilyChat: chatInfo.isMainFamilyChat,
+    });
+  }, [navigation, chatId, chatInfo]);
 
   const renderMessage = ({ item }) => {
     const isMine = item.sender === currentUserId;
@@ -193,7 +261,14 @@ export default function ChatDetailScreen({ navigation, route }) {
       >
         {!isMine && isFamilyChat && (
           <View style={styles.senderAvatar}>
-            <Ionicons name="person" size={18} color="#FFFFFF" />
+            {item.sender_avatar_url ? (
+              <Image
+                source={{ uri: item.sender_avatar_url }}
+                style={styles.senderAvatarImage}
+              />
+            ) : (
+              <Ionicons name="person" size={18} color="#FFFFFF" />
+            )}
           </View>
         )}
 
@@ -244,6 +319,10 @@ export default function ChatDetailScreen({ navigation, route }) {
     );
   };
 
+  const headerSubtitle = isFamilyChat
+    ? (chatInfo.chatSubtitle || formatMembersCount(chatInfo.membersCount))
+    : 'Личный чат';
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="dark" />
@@ -275,15 +354,19 @@ export default function ChatDetailScreen({ navigation, route }) {
                 allowFontScaling={false}
                 numberOfLines={1}
               >
-                {chatName}
+                {chatInfo.chatName}
               </Text>
 
-              <Text style={styles.chatSubtitle} allowFontScaling={false}>
-                {isFamilyChat ? formatMembersCount(membersCount) : 'Личный чат'}
+              <Text
+                style={styles.chatSubtitle}
+                allowFontScaling={false}
+                numberOfLines={1}
+              >
+                {headerSubtitle}
               </Text>
             </View>
 
-            <TouchableOpacity activeOpacity={0.75}>
+            <TouchableOpacity activeOpacity={0.75} onPress={openSettings}>
               <Ionicons name="settings-outline" size={25} color="#858585" />
             </TouchableOpacity>
           </View>
@@ -292,7 +375,7 @@ export default function ChatDetailScreen({ navigation, route }) {
         <View style={[styles.messagesArea, { paddingHorizontal: screenPadding }]}>
           {loading ? (
             <View style={styles.centerContent}>
-              <ActivityIndicator size="small" color="#9456FE" />
+              <ActivityIndicator size="small" color={MAIN_COLOR} />
             </View>
           ) : messages.length === 0 ? (
             <View style={styles.centerContent}>
@@ -304,7 +387,7 @@ export default function ChatDetailScreen({ navigation, route }) {
             <FlatList
               ref={flatListRef}
               data={messages}
-              keyExtractor={(item) => String(item.id)}
+              keyExtractor={(item, index) => String(item.id || index)}
               renderItem={renderMessage}
               contentContainerStyle={styles.messagesList}
               showsVerticalScrollIndicator={false}
@@ -361,88 +444,73 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-
   flex: {
     flex: 1,
   },
-
   headerOuter: {
     width: '100%',
     height: 60,
     backgroundColor: '#F7F7F7',
   },
-
   headerInner: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
   },
-
   chatAvatar: {
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor: '#9456FE',
+    backgroundColor: MAIN_COLOR,
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: 18,
   },
-
   headerTextBlock: {
     flex: 1,
     marginLeft: 10,
     marginRight: 10,
   },
-
   chatTitle: {
     fontFamily: fontFamily.medium,
     fontSize: fontSize.titleS,
     color: '#262626',
   },
-
   chatSubtitle: {
     marginTop: 1,
     fontFamily: fontFamily.regular,
     fontSize: fontSize.bodyM,
     color: '#959595',
   },
-
   messagesArea: {
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-
   centerContent: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
-
   emptyText: {
     fontFamily: fontFamily.regular,
     fontSize: fontSize.bodyM,
     color: '#A4A4A4',
   },
-
   messagesList: {
     paddingTop: 16,
     paddingBottom: 16,
   },
-
   messageRow: {
     width: '100%',
     marginBottom: 10,
     flexDirection: 'row',
   },
-
   otherMessageRow: {
     justifyContent: 'flex-start',
   },
-
   myMessageRow: {
     justifyContent: 'flex-end',
   },
-
   senderAvatar: {
     width: 32,
     height: 32,
@@ -451,14 +519,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 4,
+    overflow: 'hidden',
   },
-
+  senderAvatarImage: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+  },
   messageBubble: {
     maxWidth: '74%',
     paddingHorizontal: 16,
     paddingVertical: 6,
   },
-
   otherBubble: {
     backgroundColor: '#F7F7F7',
     borderTopRightRadius: 25,
@@ -466,94 +538,83 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 25,
     borderTopLeftRadius: 4,
   },
-
   myBubble: {
-    backgroundColor: '#9456FE',
+    backgroundColor: MAIN_COLOR,
     borderTopLeftRadius: 25,
     borderBottomLeftRadius: 25,
     borderBottomRightRadius: 25,
     borderTopRightRadius: 4,
   },
-
   senderName: {
     fontFamily: fontFamily.medium,
     fontSize: 13,
     color: '#606060',
     marginBottom: 2,
   },
-
   messageText: {
     fontFamily: fontFamily.regular,
     fontSize: fontSize.bodyM,
     color: '#434343',
   },
-
   myMessageText: {
     color: '#FFFFFF',
   },
-
   messageMeta: {
     marginTop: 3,
     flexDirection: 'row',
     alignSelf: 'flex-end',
     alignItems: 'center',
   },
-
   messageTime: {
     fontFamily: fontFamily.regular,
     fontSize: fontSize.caption,
     color: '#A9A9A9',
   },
-
   myMessageTime: {
     color: '#FFFFFF',
     opacity: 0.75,
   },
-
   messageCheck: {
     marginLeft: 4,
   },
-
   inputBarOuter: {
     width: '100%',
     minHeight: 71,
     justifyContent: 'center',
     backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#F2F2F2',
   },
-
   inputWrapper: {
-    width: '100%',
-    minHeight: 52,
-    borderWidth: 1,
-    borderColor: '#CDCDCD',
-    borderRadius: 20,
-    paddingLeft: 16,
-    paddingRight: 8,
+    minHeight: 48,
+    borderRadius: 24,
+    backgroundColor: '#F7F7F7',
     flexDirection: 'row',
     alignItems: 'center',
+    paddingLeft: 18,
+    paddingRight: 6,
+    marginTop: 8,
+    marginBottom: 8,
   },
-
   messageInput: {
     flex: 1,
     maxHeight: 100,
-    fontFamily: fontFamily.regular,
-    fontSize: 16,
-    color: '#313131',
     paddingVertical: 10,
-    paddingRight: 8,
+    paddingRight: 10,
+    fontFamily: fontFamily.regular,
+    fontSize: fontSize.bodyM,
+    color: '#262626',
   },
-
   sendButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: '#9456FE',
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: MAIN_COLOR,
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: 8,
   },
-
   sendButtonDisabled: {
-    opacity: 0.5,
+    opacity: 0.45,
   },
 });

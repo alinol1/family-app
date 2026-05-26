@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef, useState, useCallback, memo } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  ActivityIndicator,
   Image,
   PanResponder,
   LayoutAnimation,
@@ -20,62 +21,30 @@ import Svg, { Path } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { fontFamily, fontSize } from '../../utils/fonts';
 import { useLayout } from '../../utils/useLayout';
+import {
+  getFamilyTree,
+  createTreePerson,
+  addTreeRelative,
+  updateTreePersonLabel,
+} from '../../api/familytree';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
 const MAIN_COLOR = '#9456FE';
-const CURRENT_USER_ID = 101;
-const PERSON_CARD_WIDTH = 136;
-const PERSON_CARD_HEIGHT = 104;
+const PERSON_CARD_WIDTH = 150;
+const PERSON_CARD_HEIGHT = 150;
 const PLUS_SIZE = 42;
-const ROW_GAP = 105;
-const COLUMN_GAP = 44;
+const ROW_GAP = 130;
+const COLUMN_GAP = 50;
 const CANVAS_PADDING = 120;
 const GRID_SIZE = 42;
 const MIN_SCALE = 0.55;
 const MAX_SCALE = 1.8;
-
-const FAMILY_ACCOUNTS = [
-  { id: 101, firstName: 'Максим', lastName: 'Куплинов', avatarUrl: '' },
-  { id: 102, firstName: 'Галина', lastName: 'Михайловна', avatarUrl: '' },
-  { id: 103, firstName: 'Алексей', lastName: 'Куплинов', avatarUrl: '' },
-];
-
-const INITIAL_PERSONS = [
-  { id: 1, linkedUserId: 101, firstName: 'Максим', lastName: 'Куплинов', gender: 'male', birthDate: '2004-04-12', deathDate: '', photoUrl: '' },
-  { id: 2, linkedUserId: null, firstName: 'Мама', lastName: '', gender: 'female', birthDate: '1978-05-12', deathDate: '', photoUrl: '' },
-  { id: 3, linkedUserId: 103, firstName: 'Папа', lastName: '', gender: 'male', birthDate: '1976-09-04', deathDate: '', photoUrl: '' },
-  { id: 4, linkedUserId: null, firstName: 'Брат', lastName: '', gender: 'male', birthDate: '2008-03-22', deathDate: '', photoUrl: '' },
-  { id: 5, linkedUserId: 102, firstName: 'Галина', lastName: 'Михайловна', gender: 'female', birthDate: '1952-01-18', deathDate: '', photoUrl: '' },
-  { id: 6, linkedUserId: null, firstName: 'Дедушка', lastName: '', gender: 'male', birthDate: '1950-07-09', deathDate: '', photoUrl: '' },
-];
-
-const INITIAL_PARENT_CHILD_RELATIONS = [
-  { id: 1, parentId: 2, childId: 1, relationType: 'biological' },
-  { id: 2, parentId: 3, childId: 1, relationType: 'biological' },
-  { id: 3, parentId: 2, childId: 4, relationType: 'biological' },
-  { id: 4, parentId: 3, childId: 4, relationType: 'biological' },
-  { id: 5, parentId: 5, childId: 2, relationType: 'biological' },
-  { id: 6, parentId: 6, childId: 2, relationType: 'biological' },
-];
-
-const INITIAL_PARTNERSHIPS = [
-  { id: 1, partner1Id: 2, partner2Id: 3, status: 'married' },
-  { id: 2, partner1Id: 5, partner2Id: 6, status: 'married' },
-];
-
-const INITIAL_PERSONAL_LABELS = {
-  1: 'это я',
-  2: 'мама',
-  3: 'папа',
-  4: 'брат',
-  5: 'бабушка',
-  6: 'дедушка',
-};
 
 const RELATIVE_TYPES = [
   { key: 'mother', title: 'Мама', icon: 'female-outline' },
@@ -124,8 +93,8 @@ function formatDate(value) {
 }
 
 function getLifeDates(person) {
-  const birth = formatDate(person.birthDate);
-  const death = formatDate(person.deathDate);
+  const birth = formatDate(person?.birthDate);
+  const death = formatDate(person?.deathDate);
   if (birth && death) return `${birth} — ${death}`;
   if (birth) return birth;
   if (death) return `— ${death}`;
@@ -135,6 +104,96 @@ function getLifeDates(person) {
 function getRelativeTitle(type) {
   const item = RELATIVE_TYPES.find(relative => relative.key === type);
   return item?.title || 'Родственник';
+}
+
+function emptyToNull(value) {
+  const trimmed = String(value || '').trim();
+  return trimmed ? trimmed : null;
+}
+
+function normalizePerson(person) {
+  return {
+    id: person.id,
+    linkedUserId: person.linked_user_id ?? null,
+    isCurrentUser: Boolean(person.is_current_user),
+    firstName: person.first_name || '',
+    lastName: person.last_name || '',
+    middleName: person.middle_name || '',
+    gender: person.gender || 'unknown',
+    birthDate: person.birth_date || '',
+    deathDate: person.death_date || '',
+    photoUrl: person.photo_url || '',
+    note: person.note || '',
+    personalLabel: person.personal_label || '',
+  };
+}
+
+function normalizeFamilyAccount(member) {
+  return {
+    id: member.user_id,
+    membershipId: member.id,
+    firstName: member.first_name || '',
+    lastName: member.last_name || '',
+    avatarUrl: member.avatar || '',
+    role: member.role || '',
+  };
+}
+
+function normalizeTreeData(data = {}) {
+  const normalizedPersons = (data.persons || []).map(normalizePerson);
+  const labels = {};
+
+  normalizedPersons.forEach((person) => {
+    if (person.personalLabel) {
+      labels[person.id] = person.personalLabel;
+    }
+  });
+
+  return {
+    currentUserId: data.current_user_id ?? null,
+    persons: normalizedPersons,
+    parentChildRelations: (data.parent_child_relations || []).map((relation) => ({
+      id: relation.id,
+      parentId: relation.parent_id,
+      childId: relation.child_id,
+      relationType: relation.relation_type,
+    })),
+    partnerships: (data.partnerships || []).map((partnership) => ({
+      id: partnership.id,
+      partner1Id: partnership.partner1_id,
+      partner2Id: partnership.partner2_id,
+      status: partnership.status,
+      startDate: partnership.start_date || '',
+      endDate: partnership.end_date || '',
+    })),
+    familyAccounts: (data.family_members || [])
+      .map(normalizeFamilyAccount)
+      .filter((account) => Boolean(account.id)),
+    linkedUserIds:
+      data.linked_user_ids ||
+      normalizedPersons.map((person) => person.linkedUserId).filter(Boolean),
+    personalLabels: labels,
+  };
+}
+
+function getApiErrorMessage(error) {
+  const data = error?.response?.data;
+
+  if (!data) {
+    return 'Не удалось выполнить действие. Проверьте подключение к серверу.';
+  }
+
+  if (typeof data === 'string') return data;
+  if (data.error) return data.error;
+  if (data.detail) return data.detail;
+
+  const firstKey = Object.keys(data)[0];
+  const firstValue = firstKey ? data[firstKey] : null;
+
+  if (Array.isArray(firstValue)) return firstValue[0];
+  if (typeof firstValue === 'string') return firstValue;
+
+  return 'Сервер вернул ошибку. Проверьте введённые данные.';
 }
 
 function createRoundedPath(sourceX, sourceY, targetX, targetY) {
@@ -154,14 +213,79 @@ function createRoundedPath(sourceX, sourceY, targetX, targetY) {
   ].join(' ');
 }
 
+const PersonCard = memo(({ node, isSelected, isMe, personalLabel, onPress, onLongPress }) => {
+  const renderPersonPhoto = useCallback((person) => {
+    if (person.photoUrl) {
+      return <Image source={{ uri: person.photoUrl }} style={styles.personPhoto} />;
+    }
+    return (
+      <View style={styles.personPhotoPlaceholder}>
+        <Text style={styles.personPhotoText} allowFontScaling={false}>
+          {getInitials(person)}
+        </Text>
+      </View>
+    );
+  }, []);
+
+  return (
+    <TouchableOpacity
+      style={[
+        styles.personCard,
+        { left: node.x, top: node.y },
+        isSelected && styles.personCardSelected,
+        isMe && styles.personCardMe,
+      ]}
+      activeOpacity={0.84}
+      onPress={onPress}
+      onLongPress={onLongPress}
+    >
+      {renderPersonPhoto(node.person)}
+      <Text style={[styles.personName, isSelected && styles.personNameSelected]} allowFontScaling={false} numberOfLines={2}>
+        {getFullName(node.person)}
+      </Text>
+      <Text style={[styles.personDates, isSelected && styles.personDatesSelected]} allowFontScaling={false} numberOfLines={2}>
+        {getLifeDates(node.person)}
+      </Text>
+      {!!personalLabel && (
+        <View style={[styles.personalLabel, isMe && styles.personalLabelMe]}>
+          <Text style={[styles.personalLabelText, isMe && styles.personalLabelTextMe]} allowFontScaling={false} numberOfLines={1}>
+            {isMe ? 'это вы' : personalLabel}
+          </Text>
+        </View>
+      )}
+      {node.person.linkedUserId && (
+        <View style={styles.linkedMark}>
+          <Ionicons name="link-outline" size={11} color="#FFFFFF" />
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+});
+
+const PlusButton = memo(({ node, onPress }) => (
+  <TouchableOpacity
+    style={[styles.plusButton, { left: node.x, top: node.y }]}
+    activeOpacity={0.78}
+    onPress={() => onPress(node.relativeType, node.targetPersonId)}
+  >
+    <Ionicons name="add" size={24} color="#7B7B7B" />
+  </TouchableOpacity>
+));
+
 export default function FamilyTreeScreen({ navigation }) {
   const { screenPadding } = useLayout();
-  const [persons, setPersons] = useState(INITIAL_PERSONS);
-  const [parentChildRelations, setParentChildRelations] = useState(INITIAL_PARENT_CHILD_RELATIONS);
-  const [partnerships, setPartnerships] = useState(INITIAL_PARTNERSHIPS);
-  const [personalLabels, setPersonalLabels] = useState(INITIAL_PERSONAL_LABELS);
-  const [selectedPersonId, setSelectedPersonId] = useState(1);
-  const [addTargetPersonId, setAddTargetPersonId] = useState(1);
+  const [persons, setPersons] = useState([]);
+  const [parentChildRelations, setParentChildRelations] = useState([]);
+  const [partnerships, setPartnerships] = useState([]);
+  const [familyAccounts, setFamilyAccounts] = useState([]);
+  const [linkedUserIds, setLinkedUserIds] = useState([]);
+  const [currentUserId, setCurrentUserId] = useState(null);
+  const [personalLabels, setPersonalLabels] = useState({});
+  const [selectedPersonId, setSelectedPersonId] = useState(null);
+  const [addTargetPersonId, setAddTargetPersonId] = useState(null);
+  const [isLoadingTree, setIsLoadingTree] = useState(true);
+  const [treeError, setTreeError] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
   const [search, setSearch] = useState('');
   const [isAddModalVisible, setIsAddModalVisible] = useState(false);
   const [isPersonModalVisible, setIsPersonModalVisible] = useState(false);
@@ -182,32 +306,72 @@ export default function FamilyTreeScreen({ navigation }) {
   const gestureRef = useRef({ startX: 0, startY: 0, startScale: 1, startDistance: 0 });
   const [canvasTransform, setCanvasTransform] = useState(transformRef.current);
   
-  const updateCanvasTransform = (nextTransform) => {
+  const applyTreeData = useCallback((data, preferredSelectedId = null) => {
+    const normalized = normalizeTreeData(data);
+
+    const preferredPerson = preferredSelectedId
+      ? normalized.persons.find((person) => person.id === preferredSelectedId)
+      : null;
+    const currentUserPerson = normalized.persons.find((person) => person.isCurrentUser);
+    const firstPerson = normalized.persons[0] || null;
+    const nextSelectedId = preferredPerson?.id || currentUserPerson?.id || firstPerson?.id || null;
+
+    setCurrentUserId(normalized.currentUserId);
+    setPersons(normalized.persons);
+    setParentChildRelations(normalized.parentChildRelations);
+    setPartnerships(normalized.partnerships);
+    setFamilyAccounts(normalized.familyAccounts);
+    setLinkedUserIds(normalized.linkedUserIds);
+    setPersonalLabels(normalized.personalLabels);
+    setSelectedPersonId(nextSelectedId);
+    setAddTargetPersonId(nextSelectedId);
+  }, []);
+
+  const loadTree = useCallback(async () => {
+    try {
+      setTreeError('');
+      setIsLoadingTree(true);
+
+      const data = await getFamilyTree();
+      applyTreeData(data);
+    } catch (error) {
+      setTreeError(getApiErrorMessage(error));
+      setCurrentUserId(null);
+      setPersons([]);
+      setParentChildRelations([]);
+      setPartnerships([]);
+      setFamilyAccounts([]);
+      setLinkedUserIds([]);
+      setPersonalLabels({});
+      setSelectedPersonId(null);
+      setAddTargetPersonId(null);
+    } finally {
+      setIsLoadingTree(false);
+    }
+  }, [applyTreeData]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadTree();
+    }, [loadTree])
+  );
+  
+  const updateCanvasTransform = useCallback((nextTransform) => {
     transformRef.current = nextTransform;
     setCanvasTransform(nextTransform);
-  };
+  }, []);
   
-  const findPerson = (personId) => persons.find(person => person.id === personId) || null;
+  const findPerson = useCallback((personId) => persons.find(person => person.id === personId) || null, [persons]);
   
-  const selectedPerson = useMemo(() => findPerson(selectedPersonId) || persons[0] || null, [persons, selectedPersonId]);
-  const addTargetPerson = useMemo(() => findPerson(addTargetPersonId) || selectedPerson, [persons, addTargetPersonId, selectedPerson]);
+  const selectedPerson = useMemo(() => findPerson(selectedPersonId) || persons[0] || null, [persons, selectedPersonId, findPerson]);
+  const addTargetPerson = useMemo(() => findPerson(addTargetPersonId) || selectedPerson, [persons, addTargetPersonId, selectedPerson, findPerson]);
   
-  const getParents = (personId) => {
+  const getParents = useCallback((personId) => {
     return parentChildRelations
       .filter(relation => relation.childId === personId)
       .map(relation => findPerson(relation.parentId))
       .filter(Boolean);
-  };
-  
-  const getPartners = (personId) => {
-    return partnerships
-      .filter(partnership => partnership.partner1Id === personId || partnership.partner2Id === personId)
-      .map(partnership => {
-        const partnerId = partnership.partner1Id === personId ? partnership.partner2Id : partnership.partner1Id;
-        return findPerson(partnerId);
-      })
-      .filter(Boolean);
-  };
+  }, [parentChildRelations, findPerson]);
   
   const searchResults = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -215,25 +379,19 @@ export default function FamilyTreeScreen({ navigation }) {
     return persons.filter(person => getFullName(person).toLowerCase().includes(query));
   }, [persons, search]);
   
-  const createPersonItem = (person) => ({
-    key: `person-${person.id}`,
-    type: 'person',
-    person,
-    personId: person.id,
-    width: PERSON_CARD_WIDTH,
-    height: PERSON_CARD_HEIGHT,
-  });
-  
   const treeRows = useMemo(() => {
     if (persons.length === 0) return [];
     
     const levels = {};
     persons.forEach(person => { levels[person.id] = 0; });
     
-    for (let i = 0; i < 30; i += 1) {
-      let changed = false;
+    let changed = true;
+    let iterations = 0;
+    while (changed && iterations < 20) {
+      changed = false;
+      iterations++;
       
-      parentChildRelations.forEach(relation => {
+      for (const relation of parentChildRelations) {
         const parentLevel = levels[relation.parentId] ?? 0;
         const childLevel = levels[relation.childId] ?? 0;
         const neededChildLevel = parentLevel + 1;
@@ -241,9 +399,9 @@ export default function FamilyTreeScreen({ navigation }) {
           levels[relation.childId] = neededChildLevel;
           changed = true;
         }
-      });
+      }
       
-      partnerships.forEach(partnership => {
+      for (const partnership of partnerships) {
         const partner1Level = levels[partnership.partner1Id] ?? 0;
         const partner2Level = levels[partnership.partner2Id] ?? 0;
         const sharedLevel = Math.max(partner1Level, partner2Level);
@@ -255,75 +413,88 @@ export default function FamilyTreeScreen({ navigation }) {
           levels[partnership.partner2Id] = sharedLevel;
           changed = true;
         }
-      });
-      
-      if (!changed) break;
+      }
     }
     
     const minLevel = Math.min(...Object.values(levels));
     Object.keys(levels).forEach(personId => { levels[personId] = levels[personId] - minLevel; });
     
     const groupedByLevel = {};
-    persons.forEach(person => {
+    for (const person of persons) {
       const level = levels[person.id] ?? 0;
       if (!groupedByLevel[level]) groupedByLevel[level] = [];
       groupedByLevel[level].push(person);
-    });
+    }
     
     const orderRowPersons = (rowPersons) => {
       const usedIds = new Set();
       const ordered = [];
-      const getPartnerIds = (personId) => {
-        return partnerships
-          .filter(partnership => partnership.partner1Id === personId || partnership.partner2Id === personId)
-          .map(partnership => partnership.partner1Id === personId ? partnership.partner2Id : partnership.partner1Id);
-      };
       
-      rowPersons.forEach(person => {
-        if (usedIds.has(person.id)) return;
+      const partnerMap = new Map();
+      for (const partnership of partnerships) {
+        partnerMap.set(partnership.partner1Id, partnership.partner2Id);
+        partnerMap.set(partnership.partner2Id, partnership.partner1Id);
+      }
+      
+      for (const person of rowPersons) {
+        if (usedIds.has(person.id)) continue;
         ordered.push(person);
         usedIds.add(person.id);
-        const partnerIds = getPartnerIds(person.id);
-        partnerIds.forEach(partnerId => {
+        
+        const partnerId = partnerMap.get(person.id);
+        if (partnerId) {
           const partner = rowPersons.find(item => item.id === partnerId);
           if (partner && !usedIds.has(partner.id)) {
             ordered.push(partner);
             usedIds.add(partner.id);
           }
-        });
-      });
+        }
+      }
       
-      rowPersons.forEach(person => {
+      for (const person of rowPersons) {
         if (!usedIds.has(person.id)) {
           ordered.push(person);
           usedIds.add(person.id);
         }
-      });
+      }
       
       return ordered;
     };
     
-    return Object.keys(groupedByLevel)
-      .map(level => Number(level))
-      .sort((a, b) => a - b)
-      .map(level => ({
-        key: `level-${level}`,
-        items: orderRowPersons(groupedByLevel[level]).map(createPersonItem),
-      }));
+    const levelsArray = Object.keys(groupedByLevel).map(level => Number(level)).sort((a, b) => a - b);
+    return levelsArray.map(level => ({
+      key: `level-${level}`,
+      items: orderRowPersons(groupedByLevel[level]).map(person => ({
+        key: `person-${person.id}`,
+        type: 'person',
+        person,
+        personId: person.id,
+        width: PERSON_CARD_WIDTH,
+        height: PERSON_CARD_HEIGHT,
+      })),
+    }));
   }, [persons, parentChildRelations, partnerships]);
   
-  const rowWidths = treeRows.map(row => {
-    const itemsWidth = row.items.reduce((sum, item) => sum + item.width, 0);
-    const gapsWidth = Math.max(row.items.length - 1, 0) * COLUMN_GAP;
-    return itemsWidth + gapsWidth;
-  });
+  const rowWidths = useMemo(() => {
+    return treeRows.map(row => {
+      const itemsWidth = row.items.reduce((sum, item) => sum + item.width, 0);
+      const gapsWidth = Math.max(row.items.length - 1, 0) * COLUMN_GAP;
+      return itemsWidth + gapsWidth;
+    });
+  }, [treeRows]);
   
-  const canvasWidth = Math.max(...rowWidths, 1) + CANVAS_PADDING * 2;
-  const canvasHeight = CANVAS_PADDING * 2 + treeRows.length * PERSON_CARD_HEIGHT + Math.max(treeRows.length - 1, 0) * ROW_GAP;
+  const canvasWidth = useMemo(() => {
+    return Math.max(...rowWidths, 1) + CANVAS_PADDING * 2;
+  }, [rowWidths]);
+  
+  const canvasHeight = useMemo(() => {
+    return CANVAS_PADDING * 2 + treeRows.length * PERSON_CARD_HEIGHT + Math.max(treeRows.length - 1, 0) * ROW_GAP;
+  }, [treeRows.length]);
   
   const positionedNodes = useMemo(() => {
     const nodes = [];
-    treeRows.forEach((row, rowIndex) => {
+    for (let rowIndex = 0; rowIndex < treeRows.length; rowIndex++) {
+      const row = treeRows[rowIndex];
       const rowWidth = row.items.reduce((sum, item, index) => {
         return sum + item.width + (index > 0 ? COLUMN_GAP : 0);
       }, 0);
@@ -331,7 +502,7 @@ export default function FamilyTreeScreen({ navigation }) {
       let currentX = (canvasWidth - rowWidth) / 2;
       const y = CANVAS_PADDING + rowIndex * (PERSON_CARD_HEIGHT + ROW_GAP);
       
-      row.items.forEach(item => {
+      for (const item of row.items) {
         nodes.push({
           ...item,
           rowKey: row.key,
@@ -344,8 +515,8 @@ export default function FamilyTreeScreen({ navigation }) {
           rightX: currentX + item.width,
         });
         currentX += item.width + COLUMN_GAP;
-      });
-    });
+      }
+    }
     return nodes;
   }, [treeRows, canvasWidth]);
   
@@ -368,7 +539,12 @@ export default function FamilyTreeScreen({ navigation }) {
     const paths = [];
     const pairKeys = new Set();
     
-    const findNode = (personId) => positionedNodes.find(node => node.type === 'person' && node.personId === personId);
+    const nodeMap = new Map();
+    for (const node of positionedNodes) {
+      if (node.type === 'person') {
+        nodeMap.set(node.personId, node);
+      }
+    }
     
     const addPairLine = (node1, node2, color = '#C9CED4') => {
       if (!node1 || !node2) return;
@@ -379,37 +555,40 @@ export default function FamilyTreeScreen({ navigation }) {
       const endX = rightNode.x;
       if (endX <= startX) return;
       paths.push({
-        id: `pair-${node1.personId}-${node2.personId}-${paths.length}`,
+        id: `pair-${node1.personId}-${node2.personId}`,
         d: `M ${startX} ${leftNode.centerY} H ${endX}`,
         color,
         width: 2,
       });
     };
     
-    partnerships.forEach(partnership => {
-      const node1 = findNode(partnership.partner1Id);
-      const node2 = findNode(partnership.partner2Id);
+    for (const partnership of partnerships) {
+      const node1 = nodeMap.get(partnership.partner1Id);
+      const node2 = nodeMap.get(partnership.partner2Id);
       if (node1 && node2) {
         const key = [partnership.partner1Id, partnership.partner2Id].sort().join('-');
         pairKeys.add(key);
         addPairLine(node1, node2, '#BFC7CF');
       }
-    });
+    }
     
-    const relationsByChild = {};
-    parentChildRelations.forEach(relation => {
-      const parentNode = findNode(relation.parentId);
-      const childNode = findNode(relation.childId);
-      if (!parentNode || !childNode) return;
-      if (!relationsByChild[relation.childId]) {
-        relationsByChild[relation.childId] = { childNode, parentNodes: [] };
+    const relationsByChild = new Map();
+    for (const relation of parentChildRelations) {
+      const parentNode = nodeMap.get(relation.parentId);
+      const childNode = nodeMap.get(relation.childId);
+      if (!parentNode || !childNode) continue;
+      
+      if (!relationsByChild.has(relation.childId)) {
+        relationsByChild.set(relation.childId, { childNode, parentNodes: [] });
       }
-      const exists = relationsByChild[relation.childId].parentNodes.some(node => node.personId === parentNode.personId);
-      if (!exists) relationsByChild[relation.childId].parentNodes.push(parentNode);
-    });
+      const entry = relationsByChild.get(relation.childId);
+      if (!entry.parentNodes.some(node => node.personId === parentNode.personId)) {
+        entry.parentNodes.push(parentNode);
+      }
+    }
     
-    Object.values(relationsByChild).forEach(({ parentNodes }) => {
-      if (parentNodes.length < 2) return;
+    for (const { parentNodes } of relationsByChild.values()) {
+      if (parentNodes.length < 2) continue;
       const sortedParents = [...parentNodes].sort((a, b) => a.centerX - b.centerX);
       const leftParent = sortedParents[0];
       const rightParent = sortedParents[sortedParents.length - 1];
@@ -418,10 +597,11 @@ export default function FamilyTreeScreen({ navigation }) {
         addPairLine(leftParent, rightParent, '#C9CED4');
         pairKeys.add(key);
       }
-    });
+    }
     
-    Object.values(relationsByChild).forEach(({ childNode, parentNodes }) => {
-      if (!childNode || parentNodes.length === 0) return;
+    for (const { childNode, parentNodes } of relationsByChild.values()) {
+      if (!childNode || parentNodes.length === 0) continue;
+      
       const sortedParents = [...parentNodes].sort((a, b) => a.centerX - b.centerX);
       let sourceX, sourceY;
       
@@ -442,17 +622,18 @@ export default function FamilyTreeScreen({ navigation }) {
       if (d) {
         paths.push({ id: `parent-child-${childNode.personId}`, d, color: '#C9CED4', width: 2 });
       }
-    });
+    }
     
     return paths;
   }, [positionedNodes, parentChildRelations, partnerships]);
   
   const gridPaths = useMemo(() => {
     const paths = [];
-    for (let x = 0; x <= canvasWidth; x += GRID_SIZE) {
+    const step = GRID_SIZE;
+    for (let x = 0; x <= canvasWidth; x += step) {
       paths.push({ id: `grid-v-${x}`, d: `M ${x} 0 V ${canvasHeight}` });
     }
-    for (let y = 0; y <= canvasHeight; y += GRID_SIZE) {
+    for (let y = 0; y <= canvasHeight; y += step) {
       paths.push({ id: `grid-h-${y}`, d: `M 0 ${y} H ${canvasWidth}` });
     }
     return paths;
@@ -492,7 +673,7 @@ export default function FamilyTreeScreen({ navigation }) {
     })
   ).current;
   
-  const resetForm = () => {
+  const resetForm = useCallback(() => {
     setAddMode('manual');
     setSelectedAccountId(null);
     setFirstName('');
@@ -502,9 +683,9 @@ export default function FamilyTreeScreen({ navigation }) {
     setDeathDate('');
     setPhotoUrl('');
     setPersonalRelationText('');
-  };
+  }, []);
   
-  const openAddModal = (type = 'child', targetPersonId = selectedPersonId) => {
+  const openAddModal = useCallback((type = 'child', targetPersonId = selectedPersonId) => {
     resetForm();
     setRelativeType(type);
     setAddTargetPersonId(targetPersonId);
@@ -522,183 +703,188 @@ export default function FamilyTreeScreen({ navigation }) {
     
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setIsAddModalVisible(true);
-  };
+  }, [resetForm, selectedPersonId]);
   
-  const closeAddModal = () => setIsAddModalVisible(false);
-  
-  const openPersonModal = (person) => {
+  const closeAddModal = useCallback(() => {
+    if (!isSaving) setIsAddModalVisible(false);
+  }, [isSaving]);
+
+  const openPersonDetails = useCallback((person) => {
+    if (!person?.id) return;
+
     setSelectedPersonId(person.id);
-    setDraftPersonalLabel(personalLabels[person.id] || '');
-    setIsPersonModalVisible(true);
-  };
+
+    navigation.navigate('FamilyTreePersonDetail', {
+      personId: person.id,
+    });
+  }, [navigation]);
   
-  const closePersonModal = () => setIsPersonModalVisible(false);
+  const closePersonModal = useCallback(() => {
+    if (!isSaving) setIsPersonModalVisible(false);
+  }, [isSaving]);
   
   const availableAccounts = useMemo(() => {
-    return FAMILY_ACCOUNTS.filter(account => !persons.some(person => person.linkedUserId === account.id));
-  }, [persons]);
+    const linkedIds = new Set(linkedUserIds);
+    return familyAccounts.filter((account) => !linkedIds.has(account.id));
+  }, [familyAccounts, linkedUserIds]);
   
-  const selectAccount = (account) => {
+  const selectAccount = useCallback((account) => {
     setSelectedAccountId(account.id);
     setFirstName(account.firstName);
     setLastName(account.lastName);
     setPhotoUrl(account.avatarUrl || '');
-  };
+  }, []);
   
-  const createNewPerson = () => {
+  const createPersonPayload = useCallback(() => {
+    const payload = {
+      gender,
+      birth_date: emptyToNull(birthDate),
+      death_date: emptyToNull(deathDate),
+      photo_url: photoUrl.trim(),
+      personal_label: personalRelationText.trim(),
+    };
+
     if (addMode === 'account') {
-      const account = FAMILY_ACCOUNTS.find(item => item.id === selectedAccountId);
-      if (!account) {
+      if (!selectedAccountId) {
         Alert.alert('Семейное древо', 'Выберите участника семьи');
         return null;
       }
-      return {
-        id: Date.now(),
-        linkedUserId: account.id,
-        firstName: account.firstName,
-        lastName: account.lastName,
-        gender,
-        birthDate: birthDate.trim(),
-        deathDate: deathDate.trim(),
-        photoUrl: account.avatarUrl || photoUrl.trim(),
-      };
+
+      payload.linked_user_id = selectedAccountId;
+      payload.first_name = firstName.trim();
+      payload.last_name = lastName.trim();
+      return payload;
     }
-    
+
     const trimmedFirstName = firstName.trim();
+
     if (!trimmedFirstName) {
       Alert.alert('Семейное древо', 'Введите имя');
       return null;
     }
-    
-    return {
-      id: Date.now(),
-      linkedUserId: null,
-      firstName: trimmedFirstName,
-      lastName: lastName.trim(),
-      gender,
-      birthDate: birthDate.trim(),
-      deathDate: deathDate.trim(),
-      photoUrl: photoUrl.trim(),
-    };
-  };
-  
-  const submitRelative = () => {
+
+    payload.first_name = trimmedFirstName;
+    payload.last_name = lastName.trim();
+
+    return payload;
+  }, [
+    addMode,
+    selectedAccountId,
+    gender,
+    birthDate,
+    deathDate,
+    photoUrl,
+    personalRelationText,
+    firstName,
+    lastName,
+  ]);
+
+  const submitRelative = useCallback(async () => {
     const targetPerson = findPerson(addTargetPersonId);
-    if (!targetPerson) {
+
+    if (persons.length > 0 && !targetPerson) {
       Alert.alert('Семейное древо', 'Не выбран человек для связи');
       return;
     }
-    
-    const newPerson = createNewPerson();
-    if (!newPerson) return;
-    
-    const nextRelations = [];
-    const nextPartnerships = [];
-    
-    if (relativeType === 'mother' || relativeType === 'father' || relativeType === 'parent') {
+
+    if (targetPerson && (relativeType === 'mother' || relativeType === 'father')) {
       const targetParents = getParents(targetPerson.id);
-      
+
       if (relativeType === 'mother') {
-        const hasMother = targetParents.some(parent => parent.gender === 'female');
+        const hasMother = targetParents.some((parent) => parent.gender === 'female');
+
         if (hasMother) {
           Alert.alert('Родитель уже указан', 'У этого человека уже указана мама.');
           return;
         }
       }
-      
+
       if (relativeType === 'father') {
-        const hasFather = targetParents.some(parent => parent.gender === 'male');
+        const hasFather = targetParents.some((parent) => parent.gender === 'male');
+
         if (hasFather) {
           Alert.alert('Родитель уже указан', 'У этого человека уже указан папа.');
           return;
         }
       }
-      
-      nextRelations.push({
-        id: Date.now() + 1,
-        parentId: newPerson.id,
-        childId: targetPerson.id,
-        relationType: relativeType === 'parent' ? 'guardian' : 'biological',
-      });
     }
-    
-    if (relativeType === 'child') {
-      nextRelations.push({
-        id: Date.now() + 1,
-        parentId: targetPerson.id,
-        childId: newPerson.id,
-        relationType: 'biological',
-      });
-      
-      const targetPartners = getPartners(targetPerson.id);
-      if (targetPartners.length > 0) {
-        nextRelations.push({
-          id: Date.now() + 2,
-          parentId: targetPartners[0].id,
-          childId: newPerson.id,
-          relationType: 'biological',
-        });
-      }
-    }
-    
-    if (relativeType === 'partner') {
-      nextPartnerships.push({
-        id: Date.now() + 1,
-        partner1Id: targetPerson.id,
-        partner2Id: newPerson.id,
-        status: 'relationship',
-      });
-    }
-    
-    if (relativeType === 'sibling') {
-      const parentIds = parentChildRelations.filter(relation => relation.childId === targetPerson.id).map(relation => relation.parentId);
-      
-      if (parentIds.length === 0) {
+
+    if (targetPerson && relativeType === 'sibling') {
+      const targetParents = getParents(targetPerson.id);
+
+      if (targetParents.length === 0) {
         Alert.alert('Нельзя добавить брата или сестру', 'Сначала добавьте выбранному человеку хотя бы одного родителя.');
         return;
       }
-      
-      parentIds.forEach((parentId, index) => {
-        nextRelations.push({
-          id: Date.now() + index + 1,
-          parentId,
-          childId: newPerson.id,
-          relationType: 'biological',
-        });
-      });
     }
-    
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setPersons(prev => [...prev, newPerson]);
-    
-    if (nextRelations.length > 0) {
-      setParentChildRelations(prev => [...prev, ...nextRelations]);
+
+    const payload = createPersonPayload();
+    if (!payload) return;
+
+    try {
+      setIsSaving(true);
+
+      const previousIds = new Set(persons.map((person) => person.id));
+      const data = targetPerson
+        ? await addTreeRelative(targetPerson.id, {
+            ...payload,
+            relation_type: relativeType,
+          })
+        : await createTreePerson(payload);
+
+      const normalized = normalizeTreeData(data);
+      const createdPerson = normalized.persons.find((person) => !previousIds.has(person.id));
+      const nextSelectedId = createdPerson?.id || targetPerson?.id || normalized.persons[0]?.id || null;
+
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setCurrentUserId(normalized.currentUserId);
+      setPersons(normalized.persons);
+      setParentChildRelations(normalized.parentChildRelations);
+      setPartnerships(normalized.partnerships);
+      setFamilyAccounts(normalized.familyAccounts);
+      setLinkedUserIds(normalized.linkedUserIds);
+      setPersonalLabels(normalized.personalLabels);
+      setSelectedPersonId(nextSelectedId);
+      setAddTargetPersonId(nextSelectedId);
+      closeAddModal();
+
+    } catch (error) {
+      Alert.alert('Семейное древо', getApiErrorMessage(error));
+    } finally {
+      setIsSaving(false);
     }
-    
-    if (nextPartnerships.length > 0) {
-      setPartnerships(prev => [...prev, ...nextPartnerships]);
-    }
-    
-    if (personalRelationText.trim()) {
-      setPersonalLabels(prev => ({ ...prev, [newPerson.id]: personalRelationText.trim() }));
-    }
-    
-    setSelectedPersonId(newPerson.id);
-    closeAddModal();
-  };
+  }, [
+    addTargetPersonId,
+    relativeType,
+    createPersonPayload,
+    findPerson,
+    closeAddModal,
+    persons,
+    getParents,
+  ]);
   
-  const savePersonalLabel = () => {
+  const savePersonalLabel = useCallback(async () => {
     if (!selectedPerson) return;
-    setPersonalLabels(prev => ({ ...prev, [selectedPerson.id]: draftPersonalLabel.trim() }));
-    closePersonModal();
-  };
+
+    try {
+      setIsSaving(true);
+
+      const data = await updateTreePersonLabel(selectedPerson.id, draftPersonalLabel.trim());
+      applyTreeData(data, selectedPerson.id);
+      closePersonModal();
+    } catch (error) {
+      Alert.alert('Семейное древо', getApiErrorMessage(error));
+    } finally {
+      setIsSaving(false);
+    }
+  }, [selectedPerson, draftPersonalLabel, applyTreeData, closePersonModal]);
   
-  const zoomCanvas = (delta) => {
+  const zoomCanvas = useCallback((delta) => {
     const nextScale = clamp(transformRef.current.scale + delta, MIN_SCALE, MAX_SCALE);
     updateCanvasTransform({ ...transformRef.current, scale: nextScale });
-  };
+  }, [updateCanvasTransform]);
   
-  const centerOnPerson = (personId = selectedPersonId) => {
+  const centerOnPerson = useCallback((personId = selectedPersonId) => {
     const node = positionedNodes.find(item => item.type === 'person' && item.personId === personId);
     if (!node) return;
     const scale = transformRef.current.scale;
@@ -707,280 +893,334 @@ export default function FamilyTreeScreen({ navigation }) {
       x: viewportSize.width / 2 - node.centerX * scale,
       y: viewportSize.height / 2 - node.centerY * scale,
     });
-  };
+  }, [positionedNodes, viewportSize, updateCanvasTransform, selectedPersonId]);
   
-  const centerOnMe = () => {
-    const myPerson = persons.find(person => person.linkedUserId === CURRENT_USER_ID);
+  const centerOnMe = useCallback(() => {
+    if (!currentUserId) return;
+
+    const myPerson = persons.find(person => person.linkedUserId === currentUserId);
     if (!myPerson) return;
+
     setSelectedPersonId(myPerson.id);
-    centerOnPerson(myPerson.id);
-  };
+    setTimeout(() => centerOnPerson(myPerson.id), 50);
+  }, [persons, currentUserId, centerOnPerson]);
   
-  const renderPersonPhoto = (person) => {
-    if (person.photoUrl) {
-      return <Image source={{ uri: person.photoUrl }} style={styles.personPhoto} />;
+  const handlePersonPress = useCallback((personId, person) => {
+    if (selectedPersonId === personId) {
+      openPersonDetails(person);
+    } else {
+      setSelectedPersonId(personId);
     }
-    return (
-      <View style={styles.personPhotoPlaceholder}>
-        <Text style={styles.personPhotoText} allowFontScaling={false}>{getInitials(person)}</Text>
-      </View>
-    );
-  };
+  }, [selectedPersonId, openPersonDetails]);
   
-  const renderPersonCard = (node) => {
-    const isSelected = node.personId === selectedPersonId;
-    const isMe = node.person.linkedUserId === CURRENT_USER_ID;
-    const isLinked = Boolean(node.person.linkedUserId);
-    const personalLabel = personalLabels[node.personId] || '';
-    
-    return (
-      <TouchableOpacity
+  const renderPersonCards = useMemo(() => {
+    return positionedNodes.map(node => (
+      <PersonCard
         key={node.key}
-        style={[styles.personCard, { left: node.x, top: node.y }, isSelected && styles.personCardSelected, isMe && styles.personCardMe]}
-        activeOpacity={0.84}
-        onPress={() => {
-          if (isSelected) {
-            openPersonModal(node.person);
-          } else {
-            setSelectedPersonId(node.personId);
-          }
-        }}
-        onLongPress={() => openPersonModal(node.person)}
-      >
-        {renderPersonPhoto(node.person)}
-        <Text style={[styles.personName, isSelected && styles.personNameSelected]} allowFontScaling={false} numberOfLines={2}>
-          {getFullName(node.person)}
-        </Text>
-        <Text style={[styles.personDates, isSelected && styles.personDatesSelected]} allowFontScaling={false} numberOfLines={1}>
-          {getLifeDates(node.person)}
-        </Text>
-        {!!personalLabel && (
-          <View style={[styles.personalLabel, isMe && styles.personalLabelMe]}>
-            <Text style={[styles.personalLabelText, isMe && styles.personalLabelTextMe]} allowFontScaling={false} numberOfLines={1}>
-              {isMe ? 'это вы' : personalLabel}
-            </Text>
-          </View>
-        )}
-        {isLinked && (
-          <View style={styles.linkedMark}>
-            <Ionicons name="link-outline" size={11} color="#FFFFFF" />
-          </View>
-        )}
-      </TouchableOpacity>
-    );
-  };
+        node={node}
+        isSelected={node.personId === selectedPersonId}
+        isMe={node.person.linkedUserId === currentUserId}
+        personalLabel={personalLabels[node.personId]}
+        onPress={() => handlePersonPress(node.personId, node.person)}
+        onLongPress={() => openPersonDetails(node.person)}
+      />
+    ));
+  }, [positionedNodes, selectedPersonId, currentUserId, personalLabels, handlePersonPress, openPersonDetails]);
   
-  const renderPlusButton = (node) => (
-    <TouchableOpacity
-      key={node.key}
-      style={[styles.plusButton, { left: node.x, top: node.y }]}
-      activeOpacity={0.78}
-      onPress={() => openAddModal(node.relativeType, node.targetPersonId)}
-    >
-      <Ionicons name="add" size={24} color="#7B7B7B" />
-    </TouchableOpacity>
-  );
+  const renderPlusButtons = useMemo(() => {
+    return plusNodes.map(node => (
+      <PlusButton key={node.key} node={node} onPress={openAddModal} />
+    ));
+  }, [plusNodes, openAddModal]);
   
-  const renderSearchResults = () => {
-    if (!search.trim()) return null;
-    
-    return (
-      <View style={styles.searchResults}>
-        {searchResults.length === 0 ? (
-          <Text style={styles.searchEmptyText} allowFontScaling={false}>Человек не найден</Text>
+  return (
+    <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <StatusBar style="dark" />
+      <View style={[styles.container, { paddingHorizontal: screenPadding }]}> 
+        <View style={styles.header}>
+          <TouchableOpacity activeOpacity={0.7} onPress={() => navigation.goBack()}>
+            <Ionicons name="arrow-back" size={25} color="#262626" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle} allowFontScaling={false}>Семейное древо</Text>
+          <TouchableOpacity style={styles.headerButton} activeOpacity={0.75} onPress={() => openAddModal('child', selectedPersonId)}>
+            <Ionicons name="add" size={23} color={MAIN_COLOR} />
+          </TouchableOpacity>
+        </View>
+        
+        {isLoadingTree ? (
+          <View style={styles.stateBlock}>
+            <ActivityIndicator size="large" color={MAIN_COLOR} />
+            <Text style={styles.stateTitle} allowFontScaling={false}>Загружаем древо</Text>
+            <Text style={styles.stateText} allowFontScaling={false}>Получаем данные семейного древа с сервера.</Text>
+          </View>
+        ) : treeError ? (
+          <View style={styles.stateBlock}>
+            <Ionicons name="warning-outline" size={38} color={MAIN_COLOR} />
+            <Text style={styles.stateTitle} allowFontScaling={false}>Не удалось открыть древо</Text>
+            <Text style={styles.stateText} allowFontScaling={false}>{treeError}</Text>
+            <TouchableOpacity style={styles.stateButton} activeOpacity={0.85} onPress={loadTree}>
+              <Text style={styles.stateButtonText} allowFontScaling={false}>Повторить</Text>
+            </TouchableOpacity>
+          </View>
+        ) : persons.length === 0 ? (
+          <View style={styles.stateBlock}>
+            <Ionicons name="git-network-outline" size={42} color={MAIN_COLOR} />
+            <Text style={styles.stateTitle} allowFontScaling={false}>Древо пока пустое</Text>
+            <Text style={styles.stateText} allowFontScaling={false}>Добавьте первого человека, а затем связывайте с ним родственников.</Text>
+            <TouchableOpacity style={styles.stateButton} activeOpacity={0.85} onPress={() => openAddModal('child', null)}>
+              <Ionicons name="add" size={20} color="#FFFFFF" />
+              <Text style={styles.stateButtonText} allowFontScaling={false}>Добавить человека</Text>
+            </TouchableOpacity>
+          </View>
         ) : (
-          searchResults.slice(0, 5).map(person => (
-            <TouchableOpacity
-              key={person.id}
-              style={styles.searchResultItem}
-              activeOpacity={0.75}
-              onPress={() => {
-                setSelectedPersonId(person.id);
-                setSearch('');
-                setTimeout(() => centerOnPerson(person.id), 50);
-              }}
-            >
-              <View style={styles.searchAvatar}>
-                <Text style={styles.searchAvatarText} allowFontScaling={false}>{getInitials(person)}</Text>
+          <>
+            <View style={styles.searchWrapper}>
+              <View style={styles.searchContainer}>
+                <TextInput 
+                  style={styles.searchInput} 
+                  value={search} 
+                  onChangeText={setSearch} 
+                  placeholder="Поиск человека" 
+                  placeholderTextColor="#A1A1A1" 
+                  allowFontScaling={false} 
+                />
+                <Ionicons name="search-outline" size={21} color="#858585" />
               </View>
-              <View style={styles.searchTextBlock}>
-                <Text style={styles.searchName} allowFontScaling={false} numberOfLines={1}>{getFullName(person)}</Text>
-                <Text style={styles.searchDate} allowFontScaling={false} numberOfLines={1}>{getLifeDates(person)}</Text>
-              </View>
-              {person.linkedUserId === CURRENT_USER_ID && (
-                <View style={styles.meBadgeSmall}>
-                  <Text style={styles.meBadgeSmallText} allowFontScaling={false}>Вы</Text>
+              {search.trim() && (
+                <View style={styles.searchResults}>
+                  {searchResults.length === 0 ? (
+                    <Text style={styles.searchEmptyText} allowFontScaling={false}>Человек не найден</Text>
+                  ) : (
+                    searchResults.slice(0, 5).map(person => (
+                      <TouchableOpacity
+                        key={person.id}
+                        style={styles.searchResultItem}
+                        activeOpacity={0.75}
+                        onPress={() => {
+                          setSelectedPersonId(person.id);
+                          setSearch('');
+                          setTimeout(() => centerOnPerson(person.id), 50);
+                        }}
+                      >
+                        <View style={styles.searchAvatar}>
+                          <Text style={styles.searchAvatarText} allowFontScaling={false}>{getInitials(person)}</Text>
+                        </View>
+                        <View style={styles.searchTextBlock}>
+                          <Text style={styles.searchName} allowFontScaling={false} numberOfLines={1}>{getFullName(person)}</Text>
+                          <Text style={styles.searchDate} allowFontScaling={false} numberOfLines={1}>{getLifeDates(person)}</Text>
+                        </View>
+                        {person.linkedUserId === currentUserId && (
+                          <View style={styles.meBadgeSmall}>
+                            <Text style={styles.meBadgeSmallText} allowFontScaling={false}>Вы</Text>
+                          </View>
+                        )}
+                      </TouchableOpacity>
+                    ))
+                  )}
                 </View>
               )}
-            </TouchableOpacity>
-          ))
+            </View>
+            
+            <View
+              style={styles.canvasViewport}
+              onLayout={(event) => {
+                const { width, height } = event.nativeEvent.layout;
+                setViewportSize({ width, height });
+              }}
+              {...panResponder.panHandlers}
+            >
+              <View
+                style={[
+                  styles.canvas,
+                  {
+                    width: canvasWidth,
+                    height: canvasHeight,
+                    transform: [
+                      { translateX: canvasTransform.x },
+                      { translateY: canvasTransform.y },
+                      { scale: canvasTransform.scale },
+                    ],
+                  },
+                ]}
+              >
+                <Svg width={canvasWidth} height={canvasHeight} style={styles.svgLayer} pointerEvents="none">
+                  {gridPaths.map(path => (
+                    <Path key={path.id} d={path.d} stroke="#EEF0F3" strokeWidth={1} fill="none" />
+                  ))}
+                  {linePaths.map(path => (
+                    <Path key={path.id} d={path.d} stroke="#C9CED4" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                  ))}
+                </Svg>
+                
+                {renderPersonCards}
+                {renderPlusButtons}
+              </View>
+              
+              <View style={styles.zoomControls}>
+                <TouchableOpacity style={styles.zoomButton} activeOpacity={0.75} onPress={() => zoomCanvas(-0.12)}>
+                  <Ionicons name="remove" size={20} color="#7B7B7B" />
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.zoomButton} activeOpacity={0.75} onPress={centerOnMe}>
+                  <Ionicons name="locate-outline" size={20} color={MAIN_COLOR} />
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.zoomButton} activeOpacity={0.75} onPress={() => zoomCanvas(0.12)}>
+                  <Ionicons name="add" size={20} color="#7B7B7B" />
+                </TouchableOpacity>
+              </View>
+            </View>
+          </>
         )}
       </View>
-    );
-  };
-  
-  const renderAddModeTabs = () => (
-    <View style={styles.modeTabs}>
-      <TouchableOpacity style={[styles.modeTab, addMode === 'manual' && styles.modeTabActive]} activeOpacity={0.8} onPress={() => setAddMode('manual')}>
-        <Text style={[styles.modeTabText, addMode === 'manual' && styles.modeTabTextActive]} allowFontScaling={false}>Вручную</Text>
-      </TouchableOpacity>
-      <TouchableOpacity style={[styles.modeTab, addMode === 'account' && styles.modeTabActive]} activeOpacity={0.8} onPress={() => setAddMode('account')}>
-        <Text style={[styles.modeTabText, addMode === 'account' && styles.modeTabTextActive]} allowFontScaling={false}>Связать аккаунт</Text>
-      </TouchableOpacity>
-    </View>
-  );
-  
-  const renderRelativeTypePicker = () => (
-    <View style={styles.relativeTypesGrid}>
-      {RELATIVE_TYPES.map(item => {
-        const isActive = item.key === relativeType;
-        return (
-          <TouchableOpacity
-            key={item.key}
-            style={[styles.relativeTypeButton, isActive && styles.relativeTypeButtonActive]}
-            activeOpacity={0.82}
-            onPress={() => {
-              setRelativeType(item.key);
-              if (item.key === 'mother') {
-                setGender('female');
-                setPersonalRelationText('мама');
-              }
-              if (item.key === 'father') {
-                setGender('male');
-                setPersonalRelationText('папа');
-              }
-            }}
-          >
-            <Ionicons name={item.icon} size={18} color={isActive ? '#FFFFFF' : MAIN_COLOR} />
-            <Text style={[styles.relativeTypeText, isActive && styles.relativeTypeTextActive]} allowFontScaling={false} numberOfLines={1}>
-              {item.title}
-            </Text>
-          </TouchableOpacity>
-        );
-      })}
-    </View>
-  );
-  
-  const renderGenderPicker = () => (
-    <View style={styles.chipsRow}>
-      {GENDER_OPTIONS.map(item => {
-        const isActive = item.key === gender;
-        return (
-          <TouchableOpacity key={item.key} style={[styles.chip, isActive && styles.chipActive]} activeOpacity={0.8} onPress={() => setGender(item.key)}>
-            <Text style={[styles.chipText, isActive && styles.chipTextActive]} allowFontScaling={false}>{item.title}</Text>
-          </TouchableOpacity>
-        );
-      })}
-    </View>
-  );
-  
-  const renderAccountPicker = () => {
-    if (addMode !== 'account') return null;
-    
-    return (
-      <>
-        <Text style={styles.inputLabel} allowFontScaling={false}>Участник семьи</Text>
-        {availableAccounts.length === 0 ? (
-          <View style={styles.emptyAccountsBox}>
-            <Text style={styles.emptyAccountsText} allowFontScaling={false}>Все доступные аккаунты уже связаны с карточками людей.</Text>
-          </View>
-        ) : (
-          <View style={styles.accountsList}>
-            {availableAccounts.map(account => {
-              const isSelected = selectedAccountId === account.id;
-              return (
-                <TouchableOpacity
-                  key={account.id}
-                  style={[styles.accountItem, isSelected && styles.accountItemSelected]}
-                  activeOpacity={0.8}
-                  onPress={() => selectAccount(account)}
-                >
-                  <View style={styles.accountAvatar}>
-                    <Text style={styles.accountAvatarText} allowFontScaling={false}>{getInitials(account)}</Text>
-                  </View>
-                  <View style={styles.accountTextBlock}>
-                    <Text style={styles.accountName} allowFontScaling={false}>{getFullName(account)}</Text>
-                    <Text style={styles.accountSubtext} allowFontScaling={false}>Зарегистрированный пользователь</Text>
-                  </View>
-                  {isSelected && (
-                    <View style={styles.accountCheck}>
-                      <Ionicons name="checkmark" size={15} color="#FFFFFF" />
-                    </View>
-                  )}
+      
+      <Modal visible={isAddModalVisible} transparent animationType="fade" onRequestClose={closeAddModal}>
+        <KeyboardAvoidingView style={styles.modalKeyboardView} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <Pressable style={styles.modalOverlay} onPress={closeAddModal}>
+            <Pressable style={styles.bottomSheet}>
+              <View style={styles.modalHandle} />
+              <View style={styles.modalHeader}>
+                <View style={styles.modalHeaderTextBlock}>
+                  <Text style={styles.modalTitle} allowFontScaling={false}>Добавить человека</Text>
+                  <Text style={styles.modalSubtitle} allowFontScaling={false} numberOfLines={1}>
+                    {addTargetPerson ? `${getRelativeTitle(relativeType)} для ${getFullName(addTargetPerson)}` : 'Первый человек в древе'}
+                  </Text>
+                </View>
+                <TouchableOpacity style={styles.modalCloseButton} activeOpacity={0.75} onPress={closeAddModal}>
+                  <Ionicons name="close" size={22} color="#262626" />
                 </TouchableOpacity>
-              );
-            })}
-          </View>
-        )}
-      </>
-    );
-  };
-  
-  const renderAddModal = () => (
-    <Modal visible={isAddModalVisible} transparent animationType="fade" onRequestClose={closeAddModal}>
-      <KeyboardAvoidingView style={styles.modalKeyboardView} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <Pressable style={styles.modalOverlay} onPress={closeAddModal}>
-          <Pressable style={styles.bottomSheet}>
-            <View style={styles.modalHandle} />
-            <View style={styles.modalHeader}>
-              <View style={styles.modalHeaderTextBlock}>
-                <Text style={styles.modalTitle} allowFontScaling={false}>Добавить человека</Text>
-                <Text style={styles.modalSubtitle} allowFontScaling={false} numberOfLines={1}>
-                  {getRelativeTitle(relativeType)} для {getFullName(addTargetPerson)}
-                </Text>
               </View>
-              <TouchableOpacity style={styles.modalCloseButton} activeOpacity={0.75} onPress={closeAddModal}>
-                <Ionicons name="close" size={22} color="#262626" />
-              </TouchableOpacity>
-            </View>
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.modalContent}>
-              <Text style={styles.inputLabel} allowFontScaling={false}>Тип связи</Text>
-              {renderRelativeTypePicker()}
-              {renderAddModeTabs()}
-              {renderAccountPicker()}
-              
-              {addMode === 'manual' && (
-                <>
-                  <Text style={styles.inputLabel} allowFontScaling={false}>Имя</Text>
-                  <TextInput style={styles.textInput} value={firstName} onChangeText={setFirstName} placeholder="Имя" placeholderTextColor="#A1A1A1" />
-                  <Text style={styles.inputLabel} allowFontScaling={false}>Фамилия</Text>
-                  <TextInput style={styles.textInput} value={lastName} onChangeText={setLastName} placeholder="Фамилия" placeholderTextColor="#A1A1A1" />
-                </>
-              )}
-              
-              <Text style={styles.inputLabel} allowFontScaling={false}>Кто этот человек для вас?</Text>
-              <TextInput style={styles.textInput} value={personalRelationText} onChangeText={setPersonalRelationText} placeholder="Например: бабушка, дядя, крестная" placeholderTextColor="#A1A1A1" />
-              <Text style={styles.inputLabel} allowFontScaling={false}>Пол</Text>
-              {renderGenderPicker()}
-              <Text style={styles.inputLabel} allowFontScaling={false}>Дата рождения</Text>
-              <TextInput style={styles.textInput} value={birthDate} onChangeText={setBirthDate} placeholder="ГГГГ-ММ-ДД" placeholderTextColor="#A1A1A1" />
-              <Text style={styles.inputLabel} allowFontScaling={false}>Дата смерти</Text>
-              <TextInput style={styles.textInput} value={deathDate} onChangeText={setDeathDate} placeholder="Необязательно" placeholderTextColor="#A1A1A1" />
-              
-              {addMode === 'manual' && (
-                <>
-                  <Text style={styles.inputLabel} allowFontScaling={false}>Ссылка на фото</Text>
-                  <TextInput style={styles.textInput} value={photoUrl} onChangeText={setPhotoUrl} placeholder="Можно оставить пустым" placeholderTextColor="#A1A1A1" />
-                </>
-              )}
-              
-              <TouchableOpacity style={styles.submitButton} activeOpacity={0.85} onPress={submitRelative}>
-                <Ionicons name="add" size={21} color="#FFFFFF" />
-                <Text style={styles.submitButtonText} allowFontScaling={false}>Добавить</Text>
-              </TouchableOpacity>
-            </ScrollView>
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.modalContent}>
+                <Text style={styles.inputLabel} allowFontScaling={false}>Тип связи</Text>
+                <View style={styles.relativeTypesGrid}>
+                  {RELATIVE_TYPES.map(item => {
+                    const isActive = item.key === relativeType;
+                    return (
+                      <TouchableOpacity
+                        key={item.key}
+                        style={[styles.relativeTypeButton, isActive && styles.relativeTypeButtonActive]}
+                        activeOpacity={0.82}
+                        onPress={() => {
+                          setRelativeType(item.key);
+                          if (item.key === 'mother') {
+                            setGender('female');
+                            setPersonalRelationText('мама');
+                          }
+                          if (item.key === 'father') {
+                            setGender('male');
+                            setPersonalRelationText('папа');
+                          }
+                        }}
+                      >
+                        <Ionicons name={item.icon} size={18} color={isActive ? '#FFFFFF' : MAIN_COLOR} />
+                        <Text style={[styles.relativeTypeText, isActive && styles.relativeTypeTextActive]} allowFontScaling={false} numberOfLines={1}>
+                          {item.title}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                
+                <View style={styles.modeTabs}>
+                  <TouchableOpacity style={[styles.modeTab, addMode === 'manual' && styles.modeTabActive]} activeOpacity={0.8} onPress={() => setAddMode('manual')}>
+                    <Text style={[styles.modeTabText, addMode === 'manual' && styles.modeTabTextActive]} allowFontScaling={false}>Вручную</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.modeTab, addMode === 'account' && styles.modeTabActive]} activeOpacity={0.8} onPress={() => setAddMode('account')}>
+                    <Text style={[styles.modeTabText, addMode === 'account' && styles.modeTabTextActive]} allowFontScaling={false}>Связать аккаунт</Text>
+                  </TouchableOpacity>
+                </View>
+                
+                {addMode === 'account' && (
+                  <>
+                    <Text style={styles.inputLabel} allowFontScaling={false}>Участник семьи</Text>
+                    {availableAccounts.length === 0 ? (
+                      <View style={styles.emptyAccountsBox}>
+                        <Text style={styles.emptyAccountsText} allowFontScaling={false}>Все доступные аккаунты уже связаны с карточками людей.</Text>
+                      </View>
+                    ) : (
+                      <View style={styles.accountsList}>
+                        {availableAccounts.map(account => {
+                          const isSelected = selectedAccountId === account.id;
+                          return (
+                            <TouchableOpacity
+                              key={account.id}
+                              style={[styles.accountItem, isSelected && styles.accountItemSelected]}
+                              activeOpacity={0.8}
+                              onPress={() => selectAccount(account)}
+                            >
+                              <View style={styles.accountAvatar}>
+                                <Text style={styles.accountAvatarText} allowFontScaling={false}>{getInitials(account)}</Text>
+                              </View>
+                              <View style={styles.accountTextBlock}>
+                                <Text style={styles.accountName} allowFontScaling={false}>{getFullName(account)}</Text>
+                                <Text style={styles.accountSubtext} allowFontScaling={false}>Зарегистрированный пользователь</Text>
+                              </View>
+                              {isSelected && (
+                                <View style={styles.accountCheck}>
+                                  <Ionicons name="checkmark" size={15} color="#FFFFFF" />
+                                </View>
+                              )}
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    )}
+                  </>
+                )}
+                
+                {addMode === 'manual' && (
+                  <>
+                    <Text style={styles.inputLabel} allowFontScaling={false}>Имя</Text>
+                    <TextInput style={styles.textInput} value={firstName} onChangeText={setFirstName} placeholder="Имя" placeholderTextColor="#A1A1A1" />
+                    <Text style={styles.inputLabel} allowFontScaling={false}>Фамилия</Text>
+                    <TextInput style={styles.textInput} value={lastName} onChangeText={setLastName} placeholder="Фамилия" placeholderTextColor="#A1A1A1" />
+                  </>
+                )}
+                
+                <Text style={styles.inputLabel} allowFontScaling={false}>Кто этот человек для вас?</Text>
+                <TextInput style={styles.textInput} value={personalRelationText} onChangeText={setPersonalRelationText} placeholder="Например: бабушка, дядя, крестная" placeholderTextColor="#A1A1A1" />
+                <Text style={styles.inputLabel} allowFontScaling={false}>Пол</Text>
+                <View style={styles.chipsRow}>
+                  {GENDER_OPTIONS.map(item => {
+                    const isActive = item.key === gender;
+                    return (
+                      <TouchableOpacity key={item.key} style={[styles.chip, isActive && styles.chipActive]} activeOpacity={0.8} onPress={() => setGender(item.key)}>
+                        <Text style={[styles.chipText, isActive && styles.chipTextActive]} allowFontScaling={false}>{item.title}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                <Text style={styles.inputLabel} allowFontScaling={false}>Дата рождения</Text>
+                <TextInput style={styles.textInput} value={birthDate} onChangeText={setBirthDate} placeholder="ГГГГ-ММ-ДД" placeholderTextColor="#A1A1A1" />
+                <Text style={styles.inputLabel} allowFontScaling={false}>Дата смерти</Text>
+                <TextInput style={styles.textInput} value={deathDate} onChangeText={setDeathDate} placeholder="Необязательно" placeholderTextColor="#A1A1A1" />
+                
+                {addMode === 'manual' && (
+                  <>
+                    <Text style={styles.inputLabel} allowFontScaling={false}>Ссылка на фото</Text>
+                    <TextInput style={styles.textInput} value={photoUrl} onChangeText={setPhotoUrl} placeholder="Можно оставить пустым" placeholderTextColor="#A1A1A1" />
+                  </>
+                )}
+                
+                <TouchableOpacity
+                  style={[styles.submitButton, isSaving && styles.submitButtonDisabled]}
+                  activeOpacity={0.85}
+                  onPress={submitRelative}
+                  disabled={isSaving}
+                >
+                  {isSaving ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Ionicons name="add" size={21} color="#FFFFFF" />
+                  )}
+                  <Text style={styles.submitButtonText} allowFontScaling={false}>
+                    {isSaving ? 'Сохраняем...' : 'Добавить'}
+                  </Text>
+                </TouchableOpacity>
+              </ScrollView>
+            </Pressable>
           </Pressable>
-        </Pressable>
-      </KeyboardAvoidingView>
-    </Modal>
-  );
-  
-  const renderPersonModal = () => {
-    if (!selectedPerson) return null;
-    const isMe = selectedPerson.linkedUserId === CURRENT_USER_ID;
-    const isLinked = Boolean(selectedPerson.linkedUserId);
-    
-    return (
+        </KeyboardAvoidingView>
+      </Modal>
+      
       <Modal visible={isPersonModalVisible} transparent animationType="fade" onRequestClose={closePersonModal}>
         <KeyboardAvoidingView style={styles.modalKeyboardView} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <Pressable style={styles.modalOverlay} onPress={closePersonModal}>
@@ -997,13 +1237,19 @@ export default function FamilyTreeScreen({ navigation }) {
               </View>
               
               <View style={styles.personModalCard}>
-                {renderPersonPhoto(selectedPerson)}
+                {selectedPerson?.photoUrl ? (
+                  <Image source={{ uri: selectedPerson.photoUrl }} style={styles.personPhotoLarge} />
+                ) : (
+                  <View style={styles.personPhotoPlaceholderLarge}>
+                    <Text style={styles.personPhotoTextLarge} allowFontScaling={false}>{getInitials(selectedPerson)}</Text>
+                  </View>
+                )}
                 <View style={styles.personModalTextBlock}>
                   <Text style={styles.personModalName} allowFontScaling={false} numberOfLines={1}>{getFullName(selectedPerson)}</Text>
                   <Text style={styles.personModalDates} allowFontScaling={false}>{getLifeDates(selectedPerson)}</Text>
-                  {isLinked && (
+                  {selectedPerson?.linkedUserId && (
                     <Text style={styles.personModalLinked} allowFontScaling={false}>
-                      {isMe ? 'Это ваша карточка' : 'Связано с аккаунтом семьи'}
+                      {selectedPerson.linkedUserId === currentUserId ? 'Это ваша карточка' : 'Связано с аккаунтом семьи'}
                     </Text>
                   )}
                 </View>
@@ -1015,91 +1261,67 @@ export default function FamilyTreeScreen({ navigation }) {
                 Эта подпись видна только вам. Другие члены семьи могут указать своё отношение к этому человеку.
               </Text>
               
-              <TouchableOpacity style={styles.submitButton} activeOpacity={0.85} onPress={savePersonalLabel}>
-                <Ionicons name="checkmark" size={21} color="#FFFFFF" />
-                <Text style={styles.submitButtonText} allowFontScaling={false}>Сохранить</Text>
+              <TouchableOpacity
+                style={[styles.submitButton, isSaving && styles.submitButtonDisabled]}
+                activeOpacity={0.85}
+                onPress={savePersonalLabel}
+                disabled={isSaving}
+              >
+                {isSaving ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Ionicons name="checkmark" size={21} color="#FFFFFF" />
+                )}
+                <Text style={styles.submitButtonText} allowFontScaling={false}>
+                  {isSaving ? 'Сохраняем...' : 'Сохранить'}
+                </Text>
               </TouchableOpacity>
             </Pressable>
           </Pressable>
         </KeyboardAvoidingView>
       </Modal>
-    );
-  };
-  
-  return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
-      <StatusBar style="dark" />
-      <View style={[styles.container, { paddingHorizontal: screenPadding }]}>
-        <View style={styles.header}>
-          <TouchableOpacity activeOpacity={0.7} onPress={() => navigation.goBack()}>
-            <Ionicons name="arrow-back" size={25} color="#262626" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle} allowFontScaling={false}>Семейное древо</Text>
-          <TouchableOpacity style={styles.headerButton} activeOpacity={0.75} onPress={() => openAddModal('child', selectedPersonId)}>
-            <Ionicons name="add" size={23} color={MAIN_COLOR} />
-          </TouchableOpacity>
-        </View>
-        
-        <View style={styles.searchWrapper}>
-          <View style={styles.searchContainer}>
-            <TextInput style={styles.searchInput} value={search} onChangeText={setSearch} placeholder="Поиск человека" placeholderTextColor="#A1A1A1" allowFontScaling={false} />
-            <Ionicons name="search-outline" size={21} color="#858585" />
-          </View>
-          {renderSearchResults()}
-        </View>
-        
-        <View
-          style={styles.canvasViewport}
-          onLayout={(event) => {
-            const { width, height } = event.nativeEvent.layout;
-            setViewportSize({ width, height });
-          }}
-          {...panResponder.panHandlers}
-        >
-          <View
-            style={[
-              styles.canvas,
-              {
-                width: canvasWidth,
-                height: canvasHeight,
-                transform: [
-                  { translateX: canvasTransform.x },
-                  { translateY: canvasTransform.y },
-                  { scale: canvasTransform.scale },
-                ],
-              },
-            ]}
-          >
-            <Svg width={canvasWidth} height={canvasHeight} style={styles.svgLayer} pointerEvents="none">
-              {gridPaths.map(path => <Path key={path.id} d={path.d} stroke="#EEF0F3" strokeWidth={1} fill="none" />)}
-              {linePaths.map(path => <Path key={path.id} d={path.d} stroke={path.color} strokeWidth={path.width} strokeLinecap="round" strokeLinejoin="round" fill="none" />)}
-            </Svg>
-            
-            {positionedNodes.map(renderPersonCard)}
-            {plusNodes.map(renderPlusButton)}
-          </View>
-          
-          <View style={styles.zoomControls}>
-            <TouchableOpacity style={styles.zoomButton} activeOpacity={0.75} onPress={() => zoomCanvas(-0.12)}>
-              <Ionicons name="remove" size={20} color="#262626" />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.zoomButton} activeOpacity={0.75} onPress={centerOnMe}>
-              <Ionicons name="locate-outline" size={20} color={MAIN_COLOR} />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.zoomButton} activeOpacity={0.75} onPress={() => zoomCanvas(0.12)}>
-              <Ionicons name="add" size={20} color="#262626" />
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-      
-      {renderAddModal()}
-      {renderPersonModal()}
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  stateBlock: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  stateTitle: {
+    marginTop: 14,
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.titleS,
+    color: '#262626',
+    textAlign: 'center',
+  },
+  stateText: {
+    marginTop: 8,
+    fontFamily: fontFamily.regular,
+    fontSize: fontSize.bodyM,
+    lineHeight: 22,
+    color: '#858585',
+    textAlign: 'center',
+  },
+  stateButton: {
+    minHeight: 52,
+    marginTop: 20,
+    borderRadius: 26,
+    backgroundColor: MAIN_COLOR,
+    paddingHorizontal: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  stateButtonText: {
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.bodyM,
+    color: '#FFFFFF',
+  },
   safeArea: { flex: 1, backgroundColor: '#FFFFFF' },
   container: { flex: 1, backgroundColor: '#FFFFFF' },
   header: { minHeight: 56, marginTop: 12, marginBottom: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
@@ -1121,22 +1343,36 @@ const styles = StyleSheet.create({
   canvasViewport: { flex: 1, borderRadius: 30, backgroundColor: '#FAFAFA', overflow: 'hidden' },
   canvas: { position: 'absolute', left: 0, top: 0, backgroundColor: '#FAFAFA' },
   svgLayer: { position: 'absolute', left: 0, top: 0 },
-  personCard: { position: 'absolute', width: PERSON_CARD_WIDTH, height: PERSON_CARD_HEIGHT, borderRadius: 18, backgroundColor: '#FFFFFF', borderWidth: 1.4, borderColor: '#D8DEE6', alignItems: 'center', paddingHorizontal: 8, paddingTop: 10, shadowColor: '#000000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.07, shadowRadius: 9, elevation: 2 },
-  personCardSelected: { borderColor: MAIN_COLOR, backgroundColor: '#F3ECFF' },
-  personCardMe: { borderWidth: 2, borderColor: MAIN_COLOR },
-  personPhoto: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#EAEAEA', marginBottom: 6 },
-  personPhotoPlaceholder: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#F3ECFF', justifyContent: 'center', alignItems: 'center', marginBottom: 6 },
-  personPhotoText: { fontFamily: fontFamily.medium, fontSize: fontSize.bodyM, color: MAIN_COLOR },
-  personName: { width: '100%', textAlign: 'center', fontFamily: fontFamily.medium, fontSize: fontSize.caption, lineHeight: 15, color: '#262626' },
+  personCard: { 
+    position: 'absolute', 
+    width: PERSON_CARD_WIDTH, 
+    height: PERSON_CARD_HEIGHT, 
+    borderRadius: 16, 
+    backgroundColor: '#FFFFFF', 
+    borderWidth: 1, 
+    borderColor: '#E5E9F0', 
+    alignItems: 'center', 
+    paddingHorizontal: 10, 
+    paddingTop: 12 
+  },
+  personCardSelected: { borderColor: MAIN_COLOR, borderWidth: 2, backgroundColor: '#F8F2FF' },
+  personCardMe: { borderColor: MAIN_COLOR, borderWidth: 2 },
+  personPhoto: { width: 60, height: 60, borderRadius: 12, backgroundColor: '#F3ECFF', marginBottom: 8 },
+  personPhotoPlaceholder: { width: 60, height: 60, borderRadius: 12, backgroundColor: '#F3ECFF', justifyContent: 'center', alignItems: 'center', marginBottom: 8 },
+  personPhotoText: { fontFamily: fontFamily.medium, fontSize: 20, color: MAIN_COLOR },
+  personPhotoLarge: { width: 60, height: 60, borderRadius: 12, backgroundColor: '#F3ECFF' },
+  personPhotoPlaceholderLarge: { width: 60, height: 60, borderRadius: 12, backgroundColor: '#F3ECFF', justifyContent: 'center', alignItems: 'center' },
+  personPhotoTextLarge: { fontFamily: fontFamily.medium, fontSize: 20, color: MAIN_COLOR },
+  personName: { width: '100%', textAlign: 'center', fontFamily: fontFamily.medium, fontSize: fontSize.bodyS, lineHeight: 18, color: '#262626', marginBottom: 4 },
   personNameSelected: { color: MAIN_COLOR },
-  personDates: { width: '100%', marginTop: 3, textAlign: 'center', fontFamily: fontFamily.regular, fontSize: 10, color: '#858585' },
-  personDatesSelected: { color: '#6F45C7' },
-  personalLabel: { position: 'absolute', left: 8, right: 8, bottom: 7, height: 18, borderRadius: 9, backgroundColor: '#F3ECFF', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 6 },
+  personDates: { width: '100%', textAlign: 'center', fontFamily: fontFamily.regular, fontSize: 10, color: '#858585', lineHeight: 14 },
+  personDatesSelected: { color: '#7B5B9E' },
+  personalLabel: { position: 'absolute', left: 8, right: 8, bottom: 8, height: 22, borderRadius: 8, backgroundColor: '#F3ECFF', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 6 },
   personalLabelMe: { backgroundColor: MAIN_COLOR },
-  personalLabelText: { fontFamily: fontFamily.medium, fontSize: 9, color: MAIN_COLOR },
+  personalLabelText: { fontFamily: fontFamily.medium, fontSize: 10, color: MAIN_COLOR },
   personalLabelTextMe: { color: '#FFFFFF' },
-  linkedMark: { position: 'absolute', right: 7, top: 7, width: 18, height: 18, borderRadius: 9, backgroundColor: MAIN_COLOR, justifyContent: 'center', alignItems: 'center' },
-  plusButton: { position: 'absolute', width: PLUS_SIZE, height: PLUS_SIZE, borderRadius: 14, borderWidth: 1.5, borderStyle: 'dashed', borderColor: '#A9A9A9', backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center' },
+  linkedMark: { position: 'absolute', right: 8, top: 8, width: 20, height: 20, borderRadius: 10, backgroundColor: MAIN_COLOR, justifyContent: 'center', alignItems: 'center' },
+  plusButton: { position: 'absolute', width: PLUS_SIZE, height: PLUS_SIZE, borderRadius: 12, borderWidth: 1.5, borderStyle: 'dashed', borderColor: '#7B7B7B', backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center' },
   zoomControls: { position: 'absolute', right: 12, bottom: 12, borderRadius: 22, backgroundColor: '#FFFFFF', flexDirection: 'row', padding: 4, shadowColor: '#000000', shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.1, shadowRadius: 12, elevation: 5 },
   zoomButton: { width: 38, height: 38, borderRadius: 19, justifyContent: 'center', alignItems: 'center' },
   modalKeyboardView: { flex: 1 },
@@ -1163,9 +1399,9 @@ const styles = StyleSheet.create({
   modeTabText: { fontFamily: fontFamily.medium, fontSize: fontSize.caption, color: '#262626' },
   modeTabTextActive: { color: '#FFFFFF' },
   accountsList: { marginBottom: 14 },
-  accountItem: { minHeight: 62, borderRadius: 22, backgroundColor: '#F7F7F7', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, marginBottom: 8, borderWidth: 1.4, borderColor: '#F7F7F7' },
+  accountItem: { minHeight: 62, borderRadius: 22, backgroundColor: '#F7F7F7', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, marginBottom: 8, borderWidth: 1, borderColor: '#F7F7F7' },
   accountItemSelected: { borderColor: MAIN_COLOR, backgroundColor: '#F3ECFF' },
-  accountAvatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+  accountAvatar: { width: 42, height: 42, borderRadius: 12, backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
   accountAvatarText: { fontFamily: fontFamily.medium, fontSize: fontSize.bodyM, color: MAIN_COLOR },
   accountTextBlock: { flex: 1, paddingRight: 10 },
   accountName: { fontFamily: fontFamily.medium, fontSize: fontSize.bodyM, color: '#262626' },
@@ -1179,9 +1415,10 @@ const styles = StyleSheet.create({
   chipText: { fontFamily: fontFamily.medium, fontSize: fontSize.caption, color: '#262626' },
   chipTextActive: { color: '#FFFFFF' },
   submitButton: { minHeight: 56, borderRadius: 22, backgroundColor: MAIN_COLOR, flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
+  submitButtonDisabled: { opacity: 0.7 },
   submitButtonText: { marginLeft: 7, fontFamily: fontFamily.medium, fontSize: fontSize.bodyM, color: '#FFFFFF' },
-  personModalCard: { minHeight: 76, borderRadius: 24, backgroundColor: '#F7F7F7', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, marginBottom: 18 },
-  personModalTextBlock: { flex: 1, marginLeft: 12 },
+  personModalCard: { minHeight: 90, borderRadius: 20, backgroundColor: '#F7F7F7', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, marginBottom: 18 },
+  personModalTextBlock: { flex: 1, marginLeft: 14 },
   personModalName: { fontFamily: fontFamily.medium, fontSize: fontSize.bodyL, color: '#262626' },
   personModalDates: { marginTop: 3, fontFamily: fontFamily.regular, fontSize: fontSize.caption, color: '#858585' },
   personModalLinked: { marginTop: 3, fontFamily: fontFamily.medium, fontSize: fontSize.caption, color: MAIN_COLOR },

@@ -10,17 +10,25 @@ import {
   useWindowDimensions,
   Platform,
   Modal,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Circle } from 'react-native-svg';
+import MapView, { Marker } from 'react-native-maps';
 
 import { fontFamily, fontSize } from '../../utils/fonts';
 import { useLayout } from '../../utils/useLayout';
 import { getProfile } from '../../api/auth';
 import { getAccessToken } from '../../api/tokenStorage';
+import { usePresence } from '../../context/PresenceContext';
+import { getMedicalInfo } from '../../api/medical';
+import { getCurrentLocation } from '../../utils/location';
+
+import { WS_BASE_URL } from '../../config/api';
 
 import {
   sendSOS,
@@ -39,12 +47,7 @@ const HOLD_DURATION = 3000;
 const CIRCLE_SIZE = 112;
 const STROKE_WIDTH = 7;
 
-const WS_BASE_URL = Platform.OS === 'web'
-  ? 'ws://127.0.0.1:8000'
-  : 'ws://192.168.3.2:8000';
 
-// Для VPS потом заменим на:
-// const WS_BASE_URL = 'wss://api.mayak-family.ru';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
@@ -74,6 +77,29 @@ function getMetrics(screenHeight) {
     textSize: scaleByHeight(screenHeight, 18, 20),
     buttonTextSize: scaleByHeight(screenHeight, 16, 18),
   };
+}
+
+function getPersonWord(count) {
+  const lastTwo = count % 100;
+  const last = count % 10;
+
+  if (lastTwo >= 11 && lastTwo <= 14) {
+    return 'человек';
+  }
+
+  if (last === 1) {
+    return 'человек';
+  }
+
+  if (last >= 2 && last <= 4) {
+    return 'человека';
+  }
+
+  return 'человек';
+}
+
+function getOnlinePeopleText(count) {
+  return `${count} ${getPersonWord(count)}`;
 }
 
 function formatActiveTime(seconds) {
@@ -119,12 +145,99 @@ export default function SOSScreen({ navigation }) {
   const [incomingSOSVisible, setIncomingSOSVisible] = useState(false);
   const [incomingSenderName, setIncomingSenderName] = useState('Пользователь');
 
+  const [medicalModalVisible, setMedicalModalVisible] = useState(false);
+  const [medicalInfo, setMedicalInfo] = useState(null);
+  const [medicalLoading, setMedicalLoading] = useState(false);
+
+  const [currentLocation, setCurrentLocation] = useState(null);
+  const [isLocationDetected, setIsLocationDetected] = useState(false);
+
+  const { membersPresence } = usePresence();
+
   const radius = (CIRCLE_SIZE - STROKE_WIDTH) / 2;
   const circumference = 2 * Math.PI * radius;
 
   const isSenderActive = sosState === 'senderActive';
   const isReceiverActive = sosState === 'receiverActive';
   const isActiveSOS = isSenderActive || isReceiverActive;
+
+  const onlineCount = membersPresence.filter(
+    (member) => member.is_online && !member.is_current_user
+  ).length;
+
+  const onlinePeopleText = getOnlinePeopleText(onlineCount);
+
+  const getActiveSosUserId = () => {
+    if (!activeSignal) {
+      return null;
+    }
+
+    return (
+      activeSignal.user_id ||
+      activeSignal.sender_id ||
+      activeSignal.created_by_id ||
+      activeSignal.user?.id ||
+      activeSignal.sender?.id ||
+      activeSignal.sender ||
+      null
+    );
+  };
+
+  const getActiveSOSLocation = () => {
+    if (!activeSignal) {
+      return null;
+    }
+
+    const latitude = Number(
+      activeSignal.latitude ||
+        activeSignal.lat ||
+        activeSignal.location_latitude
+    );
+
+    const longitude = Number(
+      activeSignal.longitude ||
+        activeSignal.lng ||
+        activeSignal.location_longitude
+    );
+
+    if (!latitude || !longitude) {
+      return null;
+    }
+
+    return {
+      latitude,
+      longitude,
+    };
+  };
+
+  const activeSOSLocation = getActiveSOSLocation();
+
+  const mapLocation =
+    isReceiverActive && activeSOSLocation
+      ? activeSOSLocation
+      : currentLocation;
+
+  const hasMapLocation = Boolean(
+    mapLocation?.latitude && mapLocation?.longitude
+  );
+
+  const mapRegion = hasMapLocation
+    ? {
+        latitude: mapLocation.latitude,
+        longitude: mapLocation.longitude,
+        latitudeDelta: 0.01,
+        longitudeDelta: 0.01,
+      }
+    : {
+        latitude: 55.751244,
+        longitude: 37.618423,
+        latitudeDelta: 0.25,
+        longitudeDelta: 0.25,
+      };
+
+  const mapMarkerTitle = isReceiverActive
+    ? incomingSenderName
+    : 'Вы здесь';
 
   useEffect(() => {
     if (!isActiveSOS) return;
@@ -243,6 +356,24 @@ export default function SOSScreen({ navigation }) {
     };
   };
 
+  const detectCurrentLocation = async () => {
+    try {
+      const location = await getCurrentLocation();
+
+      setCurrentLocation(location);
+      setIsLocationDetected(true);
+
+      return location;
+    } catch (error) {
+      console.log('Местоположение не определено:', error);
+
+      setCurrentLocation(null);
+      setIsLocationDetected(false);
+
+      return null;
+    }
+  };
+
   useEffect(() => {
     const initSOS = async () => {
       try {
@@ -268,6 +399,7 @@ export default function SOSScreen({ navigation }) {
     };
 
     initSOS();
+    detectCurrentLocation();
 
     return () => {
       socketRef.current?.close();
@@ -277,10 +409,14 @@ export default function SOSScreen({ navigation }) {
 
   const sendSOSRequest = async () => {
     try {
+      const location = await detectCurrentLocation();
+
       const signal = await sendSOS(
-        57.000000,
-        40.000000,
-        'Местоположение будет определено позже'
+        location?.latitude || null,
+        location?.longitude || null,
+        location?.accuracy
+          ? `Точность: ${Math.round(location.accuracy)} м`
+          : 'Местоположение не удалось определить'
       );
 
       activateSenderScreen(signal);
@@ -403,6 +539,32 @@ export default function SOSScreen({ navigation }) {
     }).start();
   };
 
+  const openMedicalInfo = async () => {
+    try {
+      setMedicalLoading(true);
+      setMedicalModalVisible(true);
+
+      const activeSosUserId = isReceiverActive
+        ? getActiveSosUserId()
+        : null;
+
+      const data = await getMedicalInfo(activeSosUserId);
+
+      setMedicalInfo(data);
+    } catch (error) {
+      Alert.alert(
+        'Медицинская информация',
+        error.response?.data?.error ||
+          error.response?.data?.detail ||
+          'Не удалось загрузить медицинскую информацию'
+      );
+
+      setMedicalModalVisible(false);
+    } finally {
+      setMedicalLoading(false);
+    }
+  };
+
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -522,11 +684,39 @@ export default function SOSScreen({ navigation }) {
         </View>
 
         <View style={[styles.mapContainer, { top: m.topBarHeight }]}>
-          <Image
-            source={require('../../../assets/images/map-placeholder.png')}
-            style={styles.mapImage}
-            resizeMode="cover"
-          />
+          <MapView
+            style={styles.map}
+            region={mapRegion}
+            showsUserLocation={false}
+            showsMyLocationButton={false}
+            toolbarEnabled={false}
+          >
+            {hasMapLocation && (
+              <Marker
+                coordinate={{
+                  latitude: mapLocation.latitude,
+                  longitude: mapLocation.longitude,
+                }}
+                title={mapMarkerTitle}
+                description={
+                  isReceiverActive
+                    ? 'Местоположение отправителя SOS'
+                    : 'Ваше текущее местоположение'
+                }
+                pinColor={isReceiverActive ? '#FA4B4B' : '#9456FE'}
+              />
+            )}
+          </MapView>
+
+          {!hasMapLocation && (
+            <View style={styles.mapFallbackOverlay}>
+              <Ionicons name="location-outline" size={32} color="#858585" />
+
+              <Text style={styles.mapFallbackText} allowFontScaling={false}>
+                Местоположение пока не определено
+              </Text>
+            </View>
+          )}
         </View>
 
         <Animated.View
@@ -581,7 +771,9 @@ export default function SOSScreen({ navigation }) {
                   : 'Ожидаем подтверждения от родных...'
                 : isReceiverActive
                   ? 'Расстояние до вас: 2.4 км'
-                  : 'Ваше местоположение определено.'}
+                  : isLocationDetected
+                    ? 'Ваше местоположение определено.'
+                    : 'Ваше местоположение не определено.'}
             </Text>
 
             <Text
@@ -594,8 +786,7 @@ export default function SOSScreen({ navigation }) {
                 </>
               ) : (
                 <>
-                  Сейчас в сети{' '}
-                  <Text style={styles.onlineAccent}>4 человека</Text>
+                  Сейчас в сети <Text style={styles.onlineAccent}>{onlinePeopleText}</Text>
                 </>
               )}
             </Text>
@@ -609,14 +800,20 @@ export default function SOSScreen({ navigation }) {
                   allowFontScaling={false}
                 >
                   Сейчас в сети{' '}
-                  <Text style={styles.onlineAccent}>4 человека</Text>
+                  <Text style={styles.onlineAccent}>
+                    {onlinePeopleText}
+                  </Text>
                 </Text>
               </>
             )}
           </View>
 
           <View style={[styles.actionsRow, { marginTop: m.actionsTop }]}>
-            <TouchableOpacity style={styles.medicalButton} activeOpacity={0.85}>
+            <TouchableOpacity
+              style={styles.medicalButton}
+              activeOpacity={0.85}
+              onPress={openMedicalInfo}
+            >
               <Text
                 style={[
                   styles.medicalButtonText,
@@ -794,6 +991,69 @@ export default function SOSScreen({ navigation }) {
           </View>
         </Modal>
       </View>
+
+      <Modal
+        visible={medicalModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMedicalModalVisible(false)}
+      >
+        <View style={styles.medicalOverlay}>
+          <View style={styles.medicalCard}>
+            <View style={styles.medicalHeader}>
+              <Text style={styles.medicalTitle} allowFontScaling={false}>
+                Медицинская информация
+              </Text>
+
+              <TouchableOpacity
+                style={styles.medicalCloseButton}
+                onPress={() => setMedicalModalVisible(false)}
+              >
+                <Ionicons name="close" size={22} color="#262626" />
+              </TouchableOpacity>
+            </View>
+
+            {medicalLoading ? (
+              <View style={styles.medicalLoadingBlock}>
+                <ActivityIndicator size="small" color="#9456FE" />
+              </View>
+            ) : (
+              <>
+                <Text style={styles.medicalName} allowFontScaling={false}>
+                  {medicalInfo?.full_name || 'Пользователь'}
+                </Text>
+
+                <View style={styles.medicalRow}>
+                  <Text style={styles.medicalLabel} allowFontScaling={false}>
+                    Группа крови
+                  </Text>
+                  <Text style={styles.medicalValue} allowFontScaling={false}>
+                    {medicalInfo?.blood_type || 'Не указано'}
+                  </Text>
+                </View>
+
+                <View style={styles.medicalRow}>
+                  <Text style={styles.medicalLabel} allowFontScaling={false}>
+                    Аллергии
+                  </Text>
+                  <Text style={styles.medicalValue} allowFontScaling={false}>
+                    {medicalInfo?.allergies || 'Не указано'}
+                  </Text>
+                </View>
+
+                <View style={styles.medicalRow}>
+                  <Text style={styles.medicalLabel} allowFontScaling={false}>
+                    Медицинские заметки
+                  </Text>
+                  <Text style={styles.medicalValue} allowFontScaling={false}>
+                    {medicalInfo?.medical_notes || 'Не указано'}
+                  </Text>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -856,9 +1116,35 @@ const styles = StyleSheet.create({
     backgroundColor: '#EDEDED',
   },
 
+  map: {
+    width: '100%',
+    height: '100%',
+  },
+
   mapImage: {
     width: '100%',
     height: '100%',
+  },
+
+  mapFallbackOverlay: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    top: 90,
+    minHeight: 92,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+  },
+
+  mapFallbackText: {
+    marginTop: 8,
+    fontFamily: fontFamily.regular,
+    fontSize: fontSize.bodyM,
+    color: '#858585',
+    textAlign: 'center',
   },
 
   bottomSheet: {
@@ -1151,5 +1437,76 @@ const styles = StyleSheet.create({
     fontFamily: fontFamily.regular,
     fontSize: 16,
     color: '#8A8A8A',
+  },
+
+  medicalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+
+  medicalCard: {
+    width: '100%',
+    borderRadius: 28,
+    backgroundColor: '#FFFFFF',
+    padding: 18,
+  },
+
+  medicalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+
+  medicalTitle: {
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.titleS,
+    color: '#262626',
+  },
+
+  medicalCloseButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#F7F7F7',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  medicalLoadingBlock: {
+    minHeight: 120,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  medicalName: {
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.bodyL,
+    color: '#262626',
+    marginBottom: 14,
+  },
+
+  medicalRow: {
+    borderRadius: 18,
+    backgroundColor: '#F7F7F7',
+    padding: 14,
+    marginBottom: 10,
+  },
+
+  medicalLabel: {
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.caption,
+    color: '#858585',
+    marginBottom: 4,
+  },
+
+  medicalValue: {
+    fontFamily: fontFamily.regular,
+    fontSize: fontSize.bodyM,
+    color: '#262626',
+    lineHeight: 21,
   },
 });

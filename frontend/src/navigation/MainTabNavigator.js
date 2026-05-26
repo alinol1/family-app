@@ -10,6 +10,8 @@ import ProfileScreen from '../screens/profile/ProfileScreen';
 import CustomTabBar from './CustomTabBar';
 import SOSGlobalOverlay from '../components/SOSGlobalOverlay';
 
+import ActivityScreen from '../screens/main/ActivityScreen';
+
 const Tab = createBottomTabNavigator();
 
 function NotificationsScreen() {
@@ -32,7 +34,7 @@ export default function MainTabNavigator() {
         <Tab.Screen name="Главная" component={HomeScreen} />
         <Tab.Screen name="Чаты" component={ChatsScreen} />
         <Tab.Screen name="SOS" component={SOSScreen} />
-        <Tab.Screen name="Уведомления" component={NotificationsScreen} />
+        <Tab.Screen name="Activity" component={ActivityScreen} />
         <Tab.Screen name="Профиль" component={ProfileScreen} />
       </Tab.Navigator>
 

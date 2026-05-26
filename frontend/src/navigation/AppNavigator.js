@@ -21,49 +21,62 @@ import JoinFamilyScreen from '../screens/family/JoinFamilyScreen';
 import MainTabNavigator from './MainTabNavigator';
 
 import SettingsScreen from '../screens/profile/SettingsScreen';
+import PersonalInfoScreen from '../screens/profile/PersonalInfoScreen';
+import MedicalInfoScreen from '../screens/profile/MedicalInfoScreen';
+import FamilyMembersScreen from '../screens/profile/FamilyMembersScreen';
+import InviteFamilyScreen from '../screens/profile/InviteFamilyScreen';
+
+import ChatDetailScreen from '../screens/main/ChatDetailScreen';
+import ChatSettingsScreen from '../screens/main/ChatSettingsScreen';
+import NotificationsScreen from '../screens/main/NotificationsScreen';
 
 import DocumentsScreen from '../screens/modules/DocumentsScreen';
-
-
-import FinanceScreen from '../screens/modules/FinanceScreen';
-import PhotosScreen from '../screens/modules/PhotosScreen';
-import FamilyTreeScreen from '../screens/modules/FamilyTreeScreen';
-
 import DocumentListScreen from '../screens/modules/DocumentListScreen';
-
 import DocumentViewScreen from '../screens/modules/DocumentViewScreen';
 
+import FinanceScreen from '../screens/modules/FinanceScreen';
+import FinanceGoalDetailScreen from '../screens/modules/FinanceGoalDetailScreen';
+import FinanceGoalsScreen from '../screens/modules/FinanceGoalsScreen';
+
+import PhotosScreen from '../screens/modules/PhotosScreen';
 import PhotoAlbumScreen from '../screens/modules/PhotoAlbumScreen';
 import PhotoViewScreen from '../screens/modules/PhotoViewScreen';
 
-import PersonalInfoScreen from '../screens/profile/PersonalInfoScreen';
+import FamilyTreeScreen from '../screens/modules/FamilyTreeScreen';
+import FamilyTreePersonDetailScreen from '../screens/modules/FamilyTreePersonDetailScreen';
 
-import MedicalInfoScreen from '../screens/profile/MedicalInfoScreen';
+import { PresenceProvider } from '../context/PresenceContext';
 
-import FamilyMembersScreen from '../screens/profile/FamilyMembersScreen';
-
-import InviteFamilyScreen from '../screens/profile/InviteFamilyScreen';
-
-import FinanceGoalDetailScreen from '../screens/modules/FinanceGoalDetailScreen';
-
-import FinanceGoalsScreen from '../screens/modules/FinanceGoalsScreen';
-
-
-
-// ВАЖНО: если у тебя файл называется иначе — поменяй путь тут
-import ChatDetailScreen from '../screens/main/ChatDetailScreen';
+import { hasTokens } from '../api/tokenStorage';
+import { getOnboardingCompleted } from '../api/onboardingStorage';
 
 const Stack = createNativeStackNavigator();
 
 export default function AppNavigator() {
   const [isLoading, setIsLoading] = useState(true);
+  const [initialRouteName, setInitialRouteName] = useState('Onboarding1');
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setIsLoading(false);
-    }, 1500);
+    const checkStartRoute = async () => {
+      try {
+        const authorized = await hasTokens();
+        const onboardingDone = await getOnboardingCompleted();
 
-    return () => clearTimeout(timer);
+        if (authorized) {
+          setInitialRouteName('MainTabs');
+        } else if (onboardingDone) {
+          setInitialRouteName('Login');
+        } else {
+          setInitialRouteName('Onboarding1');
+        }
+      } catch (error) {
+        setInitialRouteName('Onboarding1');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    checkStartRoute();
   }, []);
 
   if (isLoading) {
@@ -71,53 +84,57 @@ export default function AppNavigator() {
   }
 
   return (
-    <View style={{ flex: 1 }}>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="Onboarding1" component={Onboarding1Screen} />
-        <Stack.Screen name="Onboarding2" component={Onboarding2Screen} />
-        <Stack.Screen name="Onboarding3" component={Onboarding3Screen} />
+    <PresenceProvider enabled={true}>
+      <View style={{ flex: 1 }}>
+        <Stack.Navigator
+          initialRouteName={initialRouteName}
+          screenOptions={{ headerShown: false }}
+        >
+          <Stack.Screen name="Onboarding1" component={Onboarding1Screen} />
+          <Stack.Screen name="Onboarding2" component={Onboarding2Screen} />
+          <Stack.Screen name="Onboarding3" component={Onboarding3Screen} />
 
-        <Stack.Screen name="Login" component={LoginScreen} />
-        <Stack.Screen name="Register" component={RegisterScreen} />
-        <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
-        <Stack.Screen name="ResetPasswordSent" component={ResetPasswordSentScreen} />
-        <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} />
+          <Stack.Screen name="Login" component={LoginScreen} />
+          <Stack.Screen name="Register" component={RegisterScreen} />
+          <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+          <Stack.Screen name="ResetPasswordSent" component={ResetPasswordSentScreen} />
+          <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} />
 
-        <Stack.Screen name="FamilyChoice" component={FamilyChoiceScreen} />
-        <Stack.Screen name="CreateFamily" component={CreateFamilyScreen} />
-        <Stack.Screen name="JoinFamily" component={JoinFamilyScreen} />
+          <Stack.Screen name="FamilyChoice" component={FamilyChoiceScreen} />
+          <Stack.Screen name="CreateFamily" component={CreateFamilyScreen} />
+          <Stack.Screen name="JoinFamily" component={JoinFamilyScreen} />
 
-        <Stack.Screen name="MainTabs" component={MainTabNavigator} />
+          <Stack.Screen name="MainTabs" component={MainTabNavigator} />
 
-        <Stack.Screen name="Settings" component={SettingsScreen} />
+          <Stack.Screen name="Settings" component={SettingsScreen} />
+          <Stack.Screen name="PersonalInfo" component={PersonalInfoScreen} />
+          <Stack.Screen name="MedicalInfo" component={MedicalInfoScreen} />
+          <Stack.Screen name="FamilyMembers" component={FamilyMembersScreen} />
+          <Stack.Screen name="InviteFamily" component={InviteFamilyScreen} />
 
-        <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
+          <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
+          <Stack.Screen name="ChatSettings" component={ChatSettingsScreen} />
+          <Stack.Screen name="Notifications" component={NotificationsScreen} />
 
-        <Stack.Screen name="Documents" component={DocumentsScreen} />
-  
+          <Stack.Screen name="Documents" component={DocumentsScreen} />
+          <Stack.Screen name="DocumentList" component={DocumentListScreen} />
+          <Stack.Screen name="DocumentView" component={DocumentViewScreen} />
 
-        <Stack.Screen name="Finance" component={FinanceScreen} />
-        <Stack.Screen name="Photos" component={PhotosScreen} />
-        <Stack.Screen name="FamilyTree" component={FamilyTreeScreen} />
+          <Stack.Screen name="Finance" component={FinanceScreen} />
+          <Stack.Screen name="FinanceGoalDetail" component={FinanceGoalDetailScreen} />
+          <Stack.Screen name="FinanceGoals" component={FinanceGoalsScreen} />
 
-        <Stack.Screen name="DocumentList" component={DocumentListScreen} />
-        <Stack.Screen name="DocumentView" component={DocumentViewScreen} />
+          <Stack.Screen name="Photos" component={PhotosScreen} />
+          <Stack.Screen name="PhotoAlbum" component={PhotoAlbumScreen} />
+          <Stack.Screen name="PhotoView" component={PhotoViewScreen} />
 
-        <Stack.Screen name="PhotoAlbum" component={PhotoAlbumScreen} />
-        <Stack.Screen name="PhotoView" component={PhotoViewScreen} />
-
-        <Stack.Screen name="PersonalInfo" component={PersonalInfoScreen} />
-
-        <Stack.Screen name="MedicalInfo" component={MedicalInfoScreen} />
-
-        <Stack.Screen name="FamilyMembers" component={FamilyMembersScreen} />
-
-        <Stack.Screen name="InviteFamily" component={InviteFamilyScreen} />
-
-        <Stack.Screen name="FinanceGoalDetail" component={FinanceGoalDetailScreen} />
-
-        <Stack.Screen name="FinanceGoals" component={FinanceGoalsScreen} />
-      </Stack.Navigator>
-    </View>
+          <Stack.Screen name="FamilyTree" component={FamilyTreeScreen} />
+          <Stack.Screen
+            name="FamilyTreePersonDetail"
+            component={FamilyTreePersonDetailScreen}
+          />
+        </Stack.Navigator>
+      </View>
+    </PresenceProvider>
   );
 }

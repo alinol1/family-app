@@ -38,3 +38,7 @@ export async function hasTokens() {
   const refreshToken = await getRefreshToken();
   return !!refreshToken;
 }
+
+export async function saveAccessToken(accessToken) {
+  return setAccessToken(accessToken);
+}

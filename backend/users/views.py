@@ -438,3 +438,27 @@ class PasswordResetConfirmView(APIView):
             serializer.errors,
             status=status.HTTP_400_BAD_REQUEST
         )
+    
+
+
+class DeleteAccountView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request):
+        user = request.user
+
+        # Вариант безопаснее для связей в БД: деактивация + обезличивание
+        user.is_active = False
+        user.username = f'deleted_user_{user.id}'
+        user.email = ''
+        user.first_name = ''
+        user.last_name = ''
+        user.phone = ''
+        user.avatar.delete(save=False)
+        user.avatar = None
+
+        user.save()
+
+        return Response({
+            'message': 'Аккаунт удалён'
+        })

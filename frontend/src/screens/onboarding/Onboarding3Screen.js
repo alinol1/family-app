@@ -13,7 +13,7 @@ import { StatusBar } from 'expo-status-bar';
 import { fontFamily } from '../../utils/fonts';
 import { layout } from '../../utils/layout';
 import { useLayout } from '../../utils/useLayout';
-
+import { setOnboardingCompleted } from '../../api/onboardingStorage';
 // Базовая высота макета (iPhone 13 / 375×812)
 const BASE_HEIGHT = 812;
 
@@ -200,7 +200,14 @@ export default function Onboarding3Screen({ navigation }) {
             <TouchableOpacity
               style={styles.continueButton}
               activeOpacity={0.85}
-              onPress={() => navigation.replace('Register')}
+              onPress={async () => {
+                await setOnboardingCompleted();
+
+                navigation.reset({
+                  index: 0,
+                  routes: [{ name: 'Login' }],
+                });
+              }}
             >
               <Text
                 style={[

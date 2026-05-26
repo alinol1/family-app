@@ -168,9 +168,9 @@ export default function HomeScreen({ navigation }) {
           <TouchableOpacity
             style={styles.settingsButton}
             activeOpacity={0.8}
-            onPress={() => navigation.navigate('Settings')}
+            onPress={() => navigation.navigate('Notifications')}
           >
-            <Ionicons name="settings-outline" size={28} color="#7B7B7B" />
+            <Ionicons name="notifications-outline" size={28} color="#7B7B7B" />
           </TouchableOpacity>
         </View>
 

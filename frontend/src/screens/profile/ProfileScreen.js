@@ -20,13 +20,19 @@ import { useLayout } from '../../utils/useLayout';
 import { getProfile } from '../../api/profile';
 import { getMyFamily } from '../../api/family';
 
+import * as ImagePicker from 'expo-image-picker';
+import { uploadProfileAvatar } from '../../api/auth';
+
+import { logout as logoutApi, deleteAccount } from '../../api/auth';
+
 export default function ProfileScreen({ navigation }) {
   const { screenPadding } = useLayout();
 
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState(null);
   const [family, setFamily] = useState(null);
-
+  const [avatarUrl, setAvatarUrl] = useState(null);
+  const [avatarUploading, setAvatarUploading] = useState(false);
   useFocusEffect(
     useCallback(() => {
       let isActive = true;
@@ -42,7 +48,7 @@ export default function ProfileScreen({ navigation }) {
           }
 
           setProfile(profileData);
-
+          setAvatarUrl(profileData.avatar_url || profileData.avatar || null);
           try {
             const familyData = await getMyFamily();
 
@@ -97,8 +103,17 @@ export default function ProfileScreen({ navigation }) {
         {
           text: 'Выйти',
           style: 'destructive',
-          onPress: () => {
-            Alert.alert('Выход', 'Реальный выход подключим позже');
+          onPress: async () => {
+            try {
+              await logoutApi();
+            } catch (error) {
+              console.log('Ошибка выхода:', error.response?.data || error);
+            } finally {
+              navigation.reset({
+                index: 0,
+                routes: [{ name: 'Login' }],
+              });
+            }
           },
         },
       ]
@@ -184,6 +199,90 @@ export default function ProfileScreen({ navigation }) {
 
     return `${bloodType} · ${allergies}`;
   };
+  
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Удалить аккаунт?',
+      'Аккаунт будет удалён. Это действие нельзя отменить.',
+      [
+        {
+          text: 'Отмена',
+          style: 'cancel',
+        },
+        {
+          text: 'Удалить',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteAccount();
+
+              navigation.reset({
+                index: 0,
+                routes: [{ name: 'Login' }],
+              });
+            } catch (error) {
+              Alert.alert(
+                'Ошибка',
+                error.response?.data?.error ||
+                  error.response?.data?.detail ||
+                  'Не удалось удалить аккаунт'
+              );
+            }
+          },
+        },
+      ]
+    );
+  };
+
+
+  const pickAvatar = async () => {
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+      if (!permission.granted) {
+        Alert.alert(
+          'Нет доступа',
+          'Разрешите доступ к галерее, чтобы выбрать фото профиля.'
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.85,
+      });
+
+      if (result.canceled) return;
+
+      const image = result.assets?.[0];
+
+      if (!image?.uri) {
+        Alert.alert('Аватар', 'Не удалось получить изображение.');
+        return;
+      }
+
+      setAvatarUploading(true);
+
+      const data = await uploadProfileAvatar(image);
+
+      setAvatarUrl(data.avatar_url);
+
+      Alert.alert('Профиль', 'Аватар обновлён.');
+    } catch (error) {
+      Alert.alert(
+        'Профиль',
+        error.response?.data?.error ||
+          error.response?.data?.detail ||
+          'Не удалось загрузить аватар'
+      );
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
+
 
   const renderInfoRow = ({
     icon,
@@ -273,10 +372,15 @@ export default function ProfileScreen({ navigation }) {
           contentContainerStyle={styles.scrollContent}
         >
           <View style={styles.profileTop}>
-            <View style={styles.avatarWrapper}>
-              {profile?.avatar ? (
+            <TouchableOpacity
+              style={styles.avatarWrapper}
+              activeOpacity={0.85}
+              onPress={pickAvatar}
+              disabled={avatarUploading}
+            >
+              {avatarUrl ? (
                 <Image
-                  source={{ uri: profile.avatar }}
+                  source={{ uri: avatarUrl }}
                   style={styles.avatarImage}
                   resizeMode="cover"
                 />
@@ -288,14 +392,14 @@ export default function ProfileScreen({ navigation }) {
                 </View>
               )}
 
-              <TouchableOpacity
-                style={styles.avatarEditButton}
-                activeOpacity={0.8}
-                onPress={() => navigation.navigate('PersonalInfo')}
-              >
-                <Ionicons name="camera" size={15} color="#FFFFFF" />
-              </TouchableOpacity>
-            </View>
+              <View style={styles.avatarEditButton}>
+                {avatarUploading ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Ionicons name="camera" size={15} color="#FFFFFF" />
+                )}
+              </View>
+            </TouchableOpacity>
 
             <Text
               style={styles.userName}
@@ -402,6 +506,17 @@ export default function ProfileScreen({ navigation }) {
 
             <Text style={styles.logoutText} allowFontScaling={false}>
               Выйти из аккаунта
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.deleteAccountButton}
+            activeOpacity={0.8}
+            onPress={handleDeleteAccount}
+          >
+            <Ionicons name="trash-outline" size={22} color="#FA4B4B" />
+
+            <Text style={styles.deleteAccountText} allowFontScaling={false}>
+              Удалить аккаунт
             </Text>
           </TouchableOpacity>
         </ScrollView>
@@ -607,6 +722,24 @@ const styles = StyleSheet.create({
   },
 
   logoutText: {
+    marginLeft: 8,
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.bodyM,
+    color: '#FA4B4B',
+  },
+
+
+  deleteAccountButton: {
+    height: 56,
+    borderRadius: 20,
+    backgroundColor: '#FFF0F0',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+  },
+
+  deleteAccountText: {
     marginLeft: 8,
     fontFamily: fontFamily.medium,
     fontSize: fontSize.bodyM,

@@ -16,7 +16,7 @@ const TABS = [
   { name: 'Главная', icon: 'home-outline', activeIcon: 'home' },
   { name: 'Чаты', icon: 'chatbubble-ellipses-outline', activeIcon: 'chatbubble-ellipses' },
   { name: 'SOS', icon: 'warning-outline', activeIcon: 'warning' },
-  { name: 'Уведомления', icon: 'notifications-outline', activeIcon: 'notifications' },
+  { name: 'Активность', icon: 'heart-outline', activeIcon: 'heart' },
   { name: 'Профиль', icon: 'person-outline', activeIcon: 'person' },
 ];
 

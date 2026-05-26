@@ -325,7 +325,10 @@ DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL')
 # Redis / Cache / Channels
 # =========================
 
-REDIS_URL = config('REDIS_URL', default='')
+REDIS_URL = config(
+    'REDIS_URL',
+    default='redis://127.0.0.1:6379/0'
+)
 
 if REDIS_URL:
     CACHES = {
@@ -360,6 +363,12 @@ else:
         },
     }
 
+
+EMAIL_USE_TLS = config(
+    'EMAIL_USE_TLS',
+    default=False,
+    cast=bool
+)
 
 # =========================
 # Production security
@@ -400,7 +409,6 @@ else:
 SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = True
 
-SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 
 X_FRAME_OPTIONS = 'DENY'

@@ -73,6 +73,37 @@ export const verifyPasswordResetCode = async (email, code) => {
   return response.data;
 };
 
+export const uploadProfileAvatar = async (image) => {
+  const fileName =
+    image.fileName ||
+    image.uri?.split('/').pop() ||
+    'avatar.jpg';
+
+  const fileType =
+    image.mimeType ||
+    'image/jpeg';
+
+  const formData = new FormData();
+
+  formData.append('avatar', {
+    uri: image.uri,
+    name: fileName,
+    type: fileType,
+  });
+
+  const response = await client.patch(
+    '/auth/profile/avatar/',
+    formData,
+    {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    }
+  );
+
+  return response.data;
+};
+
 // Подтвердить новый пароль
 export const confirmPasswordReset = async (
   email,
@@ -87,5 +118,12 @@ export const confirmPasswordReset = async (
     new_password2: newPassword2,
   });
 
+  return response.data;
+};
+
+
+export const deleteAccount = async () => {
+  const response = await client.delete('/auth/account/');
+  await clearTokens();
   return response.data;
 };
