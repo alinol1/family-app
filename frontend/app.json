@@ -1,14 +1,14 @@
 {
   "expo": {
     "name": "Маяк",
-    "slug": "mayak",
+    "slug": "frontend",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/logo01.png",
+    "icon": "./assets/images/logo01.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/logo01.png",
+      "image": "./assets/images/logo01.png",
       "resizeMode": "contain",
       "backgroundColor": "#9452FE"
     },
@@ -17,7 +17,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/logo01.png",
+        "foregroundImage": "./assets/images/logo01.png",
         "backgroundColor": "#9452FE"
       },
       "edgeToEdgeEnabled": true,
@@ -27,9 +27,8 @@
         "ACCESS_COARSE_LOCATION"
       ]
     },
-
     "web": {
-      "favicon": "./assets/logo01.png"
+      "favicon": "./assets/images/logo01.png"
     },
     "plugins": [
       "expo-font",
@@ -39,6 +38,7 @@
       "eas": {
         "projectId": "6618a287-44f9-4f04-b651-a2f1f434e569"
       }
-    }
+    },
+    "owner": "alinool"
   }
 }
