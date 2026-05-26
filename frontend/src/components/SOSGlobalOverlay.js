@@ -13,14 +13,7 @@ import { fontFamily } from '../utils/fonts';
 import { getProfile } from '../api/auth';
 import { getAccessToken } from '../api/tokenStorage';
 
-import { WS_BASE_URL } from '../../config/api';
-
-const socket = new WebSocket(
-  `${WS_BASE_URL}/ws/chat/${chatId}/?token=${token}`
-);
-
-// Для VPS потом заменим на:
-// const WS_BASE_URL = 'wss://api.mayak-family.ru';
+import { WS_BASE_URL } from '../config/api';
 
 function getToastText(type, name) {
   if (type === 'confirmed_by_me') {

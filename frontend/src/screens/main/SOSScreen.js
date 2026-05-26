@@ -152,7 +152,7 @@ export default function SOSScreen({ navigation }) {
   const [currentLocation, setCurrentLocation] = useState(null);
   const [isLocationDetected, setIsLocationDetected] = useState(false);
 
-  const { membersPresence } = usePresence();
+  const { membersPresence = [] } = usePresence();
 
   const radius = (CIRCLE_SIZE - STROKE_WIDTH) / 2;
   const circumference = 2 * Math.PI * radius;
@@ -161,8 +161,12 @@ export default function SOSScreen({ navigation }) {
   const isReceiverActive = sosState === 'receiverActive';
   const isActiveSOS = isSenderActive || isReceiverActive;
 
-  const onlineCount = membersPresence.filter(
-    (member) => member.is_online && !member.is_current_user
+  const safeMembersPresence = Array.isArray(membersPresence)
+    ? membersPresence
+    : [];
+
+  const onlineCount = safeMembersPresence.filter(
+    (member) => member?.is_online && !member?.is_current_user
   ).length;
 
   const onlinePeopleText = getOnlinePeopleText(onlineCount);
