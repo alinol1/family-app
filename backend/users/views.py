@@ -12,6 +12,10 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
+
+from users.models import User
+from families.models import FamilyMember
+
 from core.throttles import (
     LoginIPThrottle,
     LoginUsernameThrottle,
@@ -35,6 +39,7 @@ from .serializers import (
     PasswordResetConfirmSerializer,
 )
 
+from rest_framework.parsers import MultiPartParser, FormParser
 
 class LoginView(TokenObtainPairView):
     """
@@ -50,6 +55,75 @@ class LoginView(TokenObtainPairView):
         LoginUsernameThrottle,
     ]
 
+class UserAvatarView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def patch(self, request):
+        avatar = request.FILES.get('avatar')
+
+        if not avatar:
+            return Response(
+                {'error': 'Файл аватара не передан'},
+                status=400
+            )
+
+        if request.user.avatar:
+            request.user.avatar.delete(save=False)
+
+        request.user.avatar = avatar
+        request.user.save(update_fields=['avatar'])
+
+        avatar_url = request.build_absolute_uri(request.user.avatar.url)
+
+        return Response({
+            'message': 'Аватар обновлён',
+            'avatar_url': avatar_url,
+        })
+
+class UserMedicalInfoView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, user_id=None):
+        if user_id:
+            user = User.objects.filter(id=user_id).first()
+
+            if not user:
+                return Response(
+                    {'error': 'Пользователь не найден'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            if not hasattr(request.user, 'family_membership'):
+                return Response(
+                    {'error': 'Вы не состоите в семье'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            family = request.user.family_membership.family
+
+            is_same_family = FamilyMember.objects.filter(
+                family=family,
+                user=user
+            ).exists()
+
+            if not is_same_family:
+                return Response(
+                    {'error': 'Нет доступа к медицинской информации этого пользователя'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        else:
+            user = request.user
+
+        full_name = f'{user.first_name} {user.last_name}'.strip() or user.username
+
+        return Response({
+            'user_id': user.id,
+            'full_name': full_name,
+            'blood_type': user.blood_type or '',
+            'allergies': user.allergies or '',
+            'medical_notes': user.medical_notes or '',
+        })
 
 class RegisterView(generics.CreateAPIView):
     """
@@ -106,6 +180,54 @@ class ChangePasswordView(APIView):
             serializer.errors,
             status=status.HTTP_400_BAD_REQUEST
         )
+
+class FamilyPresenceView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not hasattr(request.user, 'family_membership'):
+            return Response({
+                'members': []
+            })
+
+        family = request.user.family_membership.family
+
+        members = FamilyMember.objects.filter(
+            family=family
+        ).select_related('user')
+
+        data = []
+
+        for member in members:
+            user = member.user
+            presence = getattr(user, 'presence', None)
+
+            avatar_url = None
+
+            if user.avatar:
+                try:
+                    avatar_url = request.build_absolute_uri(user.avatar.url)
+                except Exception:
+                    avatar_url = None
+
+            full_name = f'{user.first_name} {user.last_name}'.strip()
+
+            data.append({
+                'user_id': user.id,
+                'full_name': full_name or user.username,
+                'first_name': user.first_name,
+                'last_name': user.last_name,
+                'role': user.role,
+                'avatar_url': avatar_url,
+                'is_current_user': user.id == request.user.id,
+                'is_online': bool(presence and presence.is_online),
+                'last_seen': presence.last_seen if presence else user.last_seen,
+                'connections_count': presence.connections_count if presence else 0,
+            })
+
+        return Response({
+            'members': data
+        })
 
 
 class LogoutView(APIView):

@@ -11,7 +11,6 @@ class User(AbstractUser):
     под задачи семейного приложения.
     """
 
-    # Номер телефона
     phone = models.CharField(
         max_length=20,
         blank=True,
@@ -19,7 +18,6 @@ class User(AbstractUser):
         verbose_name='Телефон'
     )
 
-    # Фото профиля
     avatar = models.ImageField(
         upload_to='avatars/',
         blank=True,
@@ -27,12 +25,12 @@ class User(AbstractUser):
         verbose_name='Аватар'
     )
 
-    # Роль пользователя в семье
     ROLE_CHOICES = [
         ('admin', 'Администратор'),
         ('adult', 'Взрослый'),
         ('child', 'Ребёнок'),
     ]
+
     role = models.CharField(
         max_length=10,
         choices=ROLE_CHOICES,
@@ -40,7 +38,6 @@ class User(AbstractUser):
         verbose_name='Роль'
     )
 
-    # Экстренная медицинская информация
     blood_type = models.CharField(
         max_length=5,
         blank=True,
@@ -59,7 +56,6 @@ class User(AbstractUser):
         null=True,
         verbose_name='Медицинские заметки'
     )
-
 
     city = models.CharField(
         max_length=100,
@@ -94,19 +90,56 @@ class User(AbstractUser):
         verbose_name='Телефон экстренного контакта'
     )
 
-
-
-
-
-
-
+    last_seen = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name='Последняя активность'
+    )
 
     class Meta:
         verbose_name = 'Пользователь'
         verbose_name_plural = 'Пользователи'
 
     def __str__(self):
-        return f'{self.first_name} {self.last_name} ({self.username})'
+        full_name = f'{self.first_name} {self.last_name}'.strip()
+        return f'{full_name or self.username} ({self.username})'
+
+
+class UserPresence(models.Model):
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='presence',
+        verbose_name='Пользователь'
+    )
+
+    is_online = models.BooleanField(
+        default=False,
+        verbose_name='Онлайн'
+    )
+
+    connections_count = models.PositiveIntegerField(
+        default=0,
+        verbose_name='Количество активных соединений'
+    )
+
+    last_seen = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name='Последняя активность'
+    )
+
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        verbose_name='Дата обновления'
+    )
+
+    class Meta:
+        verbose_name = 'Онлайн-статус пользователя'
+        verbose_name_plural = 'Онлайн-статусы пользователей'
+
+    def __str__(self):
+        return f'{self.user} — {"online" if self.is_online else "offline"}'
 
 
 class PasswordResetCode(models.Model):

@@ -1,6 +1,8 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
-
+from .views import FamilyPresenceView
+from .views import UserMedicalInfoView
+from .views import UserAvatarView
 from .views import (
     RegisterView,
     LoginView,
@@ -25,4 +27,9 @@ urlpatterns = [
     path('password-reset/', PasswordResetRequestView.as_view(), name='password_reset'),
     path('password-reset/verify/', PasswordResetVerifyView.as_view(), name='password_reset_verify'),
     path('password-reset/confirm/', PasswordResetConfirmView.as_view(), name='password_reset_confirm'),
+    path('presence/family/', FamilyPresenceView.as_view(), name='family_presence'),
+    path('medical-info/', UserMedicalInfoView.as_view(), name='my_medical_info'),
+    path('medical-info/<int:user_id>/', UserMedicalInfoView.as_view(), name='user_medical_info'),
+
+    path('profile/avatar/', UserAvatarView.as_view(), name='profile_avatar'),
 ]

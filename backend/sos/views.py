@@ -10,6 +10,8 @@ from asgiref.sync import async_to_sync
 from .models import SOSSignal
 from .serializers import SOSSignalSerializer
 
+from notifications.services import create_family_notification
+
 
 def get_user_family(user):
     """
@@ -115,6 +117,15 @@ class SendSOSView(APIView):
             address=request.data.get('address', ''),
             status='sent'
         )
+
+        create_family_notification(
+            family=family,
+            notification_type='sos',
+            title='SOS-сигнал',
+            message=f'{request.user.first_name or request.user.username} отправил SOS-сигнал',
+            created_by=request.user,
+        )
+
 
         serializer = SOSSignalSerializer(signal)
         signal_data = serializer.data

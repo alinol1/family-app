@@ -30,6 +30,10 @@ urlpatterns = [
 
     # API SOS-сигнал
     path('api/sos/', include('sos.urls')),
+
+    path('api/activity/', include('activity.urls')),
+
+    path('api/notifications/', include('notifications.urls')),
 ]
 
 if settings.DEBUG:

@@ -71,6 +71,9 @@ INSTALLED_APPS = [
     'photos',
     'familytree',
     'sos',
+    'activity',
+
+    'notifications',
 ]
 
 MIDDLEWARE = [
@@ -289,7 +292,7 @@ REST_FRAMEWORK = {
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=14),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=60),
 
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
@@ -387,3 +390,23 @@ if not DEBUG:
     X_FRAME_OPTIONS = 'DENY'
 else:
     SECURE_SSL_REDIRECT = False
+
+
+
+# ======================================
+# SECURITY
+# ======================================
+
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = True
+
+SECURE_BROWSER_XSS_FILTER = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+
+X_FRAME_OPTIONS = 'DENY'
+
+SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
+
+# SECURE_SSL_REDIRECT = True
+# SESSION_COOKIE_SECURE = True
+# CSRF_COOKIE_SECURE = True
