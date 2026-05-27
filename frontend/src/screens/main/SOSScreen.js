@@ -688,39 +688,15 @@ export default function SOSScreen({ navigation }) {
         </View>
 
         <View style={[styles.mapContainer, { top: m.topBarHeight }]}>
-          <MapView
-            style={styles.map}
-            region={mapRegion}
-            showsUserLocation={false}
-            showsMyLocationButton={false}
-            toolbarEnabled={false}
-          >
-            {hasMapLocation && (
-              <Marker
-                coordinate={{
-                  latitude: mapLocation.latitude,
-                  longitude: mapLocation.longitude,
-                }}
-                title={mapMarkerTitle}
-                description={
-                  isReceiverActive
-                    ? 'Местоположение отправителя SOS'
-                    : 'Ваше текущее местоположение'
-                }
-                pinColor={isReceiverActive ? '#FA4B4B' : '#9456FE'}
-              />
-            )}
-          </MapView>
-
-          {!hasMapLocation && (
+          <View style={styles.map}>
             <View style={styles.mapFallbackOverlay}>
               <Ionicons name="location-outline" size={32} color="#858585" />
 
               <Text style={styles.mapFallbackText} allowFontScaling={false}>
-                Местоположение пока не определено
+                Карта временно отключена
               </Text>
             </View>
-          )}
+          </View>
         </View>
 
         <Animated.View
