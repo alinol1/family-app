@@ -36,17 +36,37 @@ export default function HomeScreen({ navigation }) {
 
   useFocusEffect(
     useCallback(() => {
+      let isActive = true;
+
       const loadProfile = async () => {
         try {
           const profile = await getProfile();
-          setUserName(profile.first_name || 'Пользователь');
-          setUserAvatar(profile.avatar || null);
+
+          if (!isActive) return;
+
+          const nextName =
+            profile.first_name || 'Пользователь';
+
+          const nextAvatar =
+            profile.avatar_url || profile.avatar || null;
+
+          setUserName((prev) =>
+            prev !== nextName ? nextName : prev
+          );
+
+          setUserAvatar((prev) =>
+            prev !== nextAvatar ? nextAvatar : prev
+          );
         } catch (error) {
           console.log('Ошибка загрузки профиля:', error);
         }
       };
 
       loadProfile();
+
+      return () => {
+        isActive = false;
+      };
     }, [])
   );
 
@@ -143,7 +163,10 @@ export default function HomeScreen({ navigation }) {
             <View style={styles.avatarContainer}>
               {userAvatar ? (
                 <Image
-                  source={{ uri: userAvatar }}
+                  source={{
+                    uri: userAvatar,
+                    cache: 'force-cache',
+                  }}
                   style={styles.avatar}
                 />
               ) : (
