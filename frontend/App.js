@@ -5,6 +5,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
 import AppNavigator from './src/navigation/AppNavigator';
 
+import { navigationRef } from './src/navigation/navigationRef';
+
 export default function App() {
   const [fontsLoaded] = useFonts({
     SoyuzGrotesk: require('./assets/fonts/SoyuzGroteskBold.ttf'),
@@ -23,7 +25,7 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <NavigationContainer>
+      <NavigationContainer ref={navigationRef}>
         <AppNavigator />
       </NavigationContainer>
     </SafeAreaProvider>

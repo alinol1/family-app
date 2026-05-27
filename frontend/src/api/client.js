@@ -1,6 +1,7 @@
 import axios from 'axios';
 
 import { API_BASE_URL } from '../config/api';
+import { resetToLogin } from '../navigation/navigationRef';
 
 import {
   getAccessToken,
@@ -60,6 +61,7 @@ client.interceptors.response.use(
 
     if (originalRequest._retry) {
       await clearTokens();
+      resetToLogin();
       return Promise.reject(error);
     }
 
@@ -67,6 +69,7 @@ client.interceptors.response.use(
 
     if (!refreshToken) {
       await clearTokens();
+      resetToLogin();
       return Promise.reject(error);
     }
 
@@ -111,6 +114,7 @@ client.interceptors.response.use(
     } catch (refreshError) {
       processQueue(refreshError, null);
       await clearTokens();
+      resetToLogin();
 
       return Promise.reject(refreshError);
     } finally {
