@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -12,9 +12,8 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Image,
 } from 'react-native';
-
+import CachedAvatar from '../../components/CachedAvatar';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
@@ -45,6 +44,8 @@ export default function ChatsScreen({ navigation }) {
   const [creatingChat, setCreatingChat] = useState(false);
 
   const socketRef = useRef(null);
+  const reconnectTimerRef = useRef(null);
+  const screenActiveRef = useRef(false);
 
   const sortChats = (chatsList) => {
     return [...chatsList].sort((a, b) => {
@@ -61,16 +62,48 @@ export default function ChatsScreen({ navigation }) {
     });
   };
 
-  const connectChatsWebSocket = async () => {
+  const mergeChatUpdate = useCallback((updatedChat) => {
+    if (!updatedChat?.id) return;
+
+    setChats((prevChats) => {
+      const exists = prevChats.some((chat) => chat.id === updatedChat.id);
+
+      const nextChats = exists
+        ? prevChats.map((chat) =>
+            chat.id === updatedChat.id
+              ? {
+                  ...chat,
+                  ...updatedChat,
+                  last_message: updatedChat.last_message ?? chat.last_message,
+                }
+              : chat
+          )
+        : [updatedChat, ...prevChats];
+
+      return sortChats(nextChats);
+    });
+  }, []);
+
+  const connectChatsWebSocket = useCallback(async () => {
     const token = await getAccessToken();
 
-    if (!token) {
+    if (!token || !screenActiveRef.current) {
       return;
     }
 
-    if (socketRef.current) {
-      socketRef.current.close();
-      socketRef.current = null;
+    if (
+      socketRef.current &&
+      (
+        socketRef.current.readyState === WebSocket.OPEN ||
+        socketRef.current.readyState === WebSocket.CONNECTING
+      )
+    ) {
+      return;
+    }
+
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
     }
 
     const socket = new WebSocket(
@@ -87,26 +120,8 @@ export default function ChatsScreen({ navigation }) {
       try {
         const data = JSON.parse(event.data);
 
-        if (data.type === 'chat_update') {
-          setChats((prevChats) => {
-            const updatedChat = data.chat;
-
-            const exists = prevChats.some(
-              (chat) => chat.id === updatedChat.id
-            );
-
-            let nextChats;
-
-            if (exists) {
-              nextChats = prevChats.map((chat) =>
-                chat.id === updatedChat.id ? updatedChat : chat
-              );
-            } else {
-              nextChats = [updatedChat, ...prevChats];
-            }
-
-            return sortChats(nextChats);
-          });
+        if (data.type === 'chat_update' && data.chat) {
+          mergeChatUpdate(data.chat);
         }
       } catch (error) {
         console.log('Ошибка обработки обновления чатов:', error);
@@ -123,17 +138,25 @@ export default function ChatsScreen({ navigation }) {
       if (socketRef.current === socket) {
         socketRef.current = null;
       }
-    };
-  };
 
-  const loadChats = async (isActive = true) => {
+      if (screenActiveRef.current) {
+        reconnectTimerRef.current = setTimeout(() => {
+          connectChatsWebSocket();
+        }, 1500);
+      }
+    };
+  }, [mergeChatUpdate]);
+
+  const loadChats = useCallback(async ({ silent = false } = {}) => {
     try {
-      setLoading(true);
+      if (!silent) {
+        setLoading(true);
+      }
 
       const data = await getChats();
       const sortedChats = sortChats(data || []);
 
-      if (isActive) {
+      if (screenActiveRef.current) {
         setChats(sortedChats);
       }
 
@@ -141,29 +164,45 @@ export default function ChatsScreen({ navigation }) {
     } catch (error) {
       console.log('Ошибка загрузки чатов:', error.response?.data || error);
     } finally {
-      if (isActive) {
+      if (!silent && screenActiveRef.current) {
         setLoading(false);
       }
     }
-  };
+  }, [connectChatsWebSocket]);
 
   useFocusEffect(
     useCallback(() => {
-      let isActive = true;
+      screenActiveRef.current = true;
 
-      loadChats(isActive);
+      loadChats({
+        silent: chats.length > 0,
+      });
 
       return () => {
-        isActive = false;
+        screenActiveRef.current = false;
+
+        if (reconnectTimerRef.current) {
+          clearTimeout(reconnectTimerRef.current);
+          reconnectTimerRef.current = null;
+        }
+
         socketRef.current?.close();
         socketRef.current = null;
       };
-    }, [])
+    }, [loadChats, chats.length])
   );
 
-  const filteredChats = chats.filter((chat) =>
-    chat.chat_name?.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredChats = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    if (!query) {
+      return chats;
+    }
+
+    return chats.filter((chat) =>
+      chat.chat_name?.toLowerCase().includes(query)
+    );
+  }, [chats, search]);
 
   const openCreateChatModal = async () => {
     setCreateModalVisible(true);
@@ -407,11 +446,28 @@ export default function ChatsScreen({ navigation }) {
     );
   };
 
+    const getPersonalChatAvatarUrl = (chat) => {
+    if (chat.chat_type !== 'personal') {
+      return null;
+    }
+
+    if (!Array.isArray(chat.members)) {
+      return null;
+    }
+
+    const otherMember =
+      chat.members.find((member) => member.full_name === chat.chat_name) ||
+      chat.members.find((member) => member.avatar_url);
+
+    return otherMember?.avatar_url || null;
+  };
+
   const renderChatItem = (chat) => {
     const isFamilyChat = chat.chat_type === 'family';
     const isGroupChat = chat.chat_type === 'group';
+    const isPersonalChat = chat.chat_type === 'personal';
     const lastMessage = chat.last_message;
- 
+    const personalAvatarUrl = getPersonalChatAvatarUrl(chat);
 
     return (
       <TouchableOpacity
@@ -434,19 +490,32 @@ export default function ChatsScreen({ navigation }) {
         <View
           style={[
             styles.chatAvatar,
-            !isFamilyChat && !isGroupChat && styles.personalChatAvatar,
+            isPersonalChat && styles.personalChatAvatar,
           ]}
         >
-          {chat.photo_url ? (
-            <Image
-              source={{ uri: chat.photo_url }}
-              style={styles.chatAvatarImage}
+          {isPersonalChat ? (
+            <CachedAvatar
+              uri={personalAvatarUrl}
+              size={58}
+              backgroundColor="#E6E6E6"
+              icon="person"
+              iconSize={27}
+              iconColor="#7B7B7B"
+            />
+          ) : chat.photo_url ? (
+            <CachedAvatar
+              uri={chat.photo_url}
+              size={58}
+              backgroundColor="#9452FE"
+              icon="people"
+              iconSize={28}
+              iconColor="#FFFFFF"
             />
           ) : (
             <Ionicons
-              name={isFamilyChat || isGroupChat ? 'people' : 'person'}
-              size={isFamilyChat || isGroupChat ? 28 : 27}
-              color={isFamilyChat || isGroupChat ? '#FFFFFF' : '#7B7B7B'}
+              name="people"
+              size={28}
+              color="#FFFFFF"
             />
           )}
         </View>
@@ -455,15 +524,13 @@ export default function ChatsScreen({ navigation }) {
           <Text
             style={[
               styles.chatTitle,
-              !isFamilyChat && !isGroupChat && styles.personalChatTitle,
+              isPersonalChat && styles.personalChatTitle,
             ]}
             allowFontScaling={false}
             numberOfLines={1}
           >
             {chat.chat_name}
           </Text>
-
-         
 
           <View style={styles.lastMessageRow}>
             {lastMessage ? (

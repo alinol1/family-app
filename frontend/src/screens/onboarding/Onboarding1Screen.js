@@ -24,9 +24,9 @@ const BASE = {
   subtitleSize: 22,
   subtitleLineHeight: 28,
   topPadding: 69,
-  illustrationToTitle: 32,
+  illustrationToTitle: 12,
   titleToSubtitle: 30,
-  textToButtons: 64,
+  textToButtons: 32,
   buttonTextSize: 18,
   iconSize: 20,
 };
@@ -40,9 +40,9 @@ const LIMITS = {
   buttonTextSize: { min: 16, max: 18 },
   iconSize: { min: 18, max: 20 },
   topPadding: { min: 24, max: 69 },
-  illustrationToTitle: { min: 12, max: 32 },
+  illustrationToTitle: { min: 4, max: 12 },
   titleToSubtitle: { min: 12, max: 30 },
-  textToButtons: { min: 24, max: 64 },
+  textToButtons: { min: 24, max: 32 },
 };
 
 const TITLE_LINES_ESTIMATE = 2;
@@ -135,8 +135,8 @@ export default function Onboarding1Screen({ navigation }) {
   const illustrationMaxHeight = Math.max(150, height - reservedSpace);
 
   const illustrationStyle = {
-    width: isSmall ? '90%' : '100%',
-    maxHeight: illustrationMaxHeight,
+    width: isSmall ? '110%' : '115%',
+    maxHeight: illustrationMaxHeight + 100,
     alignSelf: 'center',
   };
 
@@ -153,7 +153,7 @@ export default function Onboarding1Screen({ navigation }) {
         >
           <View style={styles.topContent}>
             <Image
-              source={require('../../../assets/images/onboarding-1.png')}
+              source={require('../../../assets/images/on1.png')}
               style={[styles.illustration, illustrationStyle]}
               resizeMode="contain"
             />

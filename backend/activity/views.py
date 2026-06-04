@@ -1,3 +1,7 @@
+from datetime import date, datetime
+
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -9,11 +13,49 @@ from .serializers import FamilyTaskSerializer, ShoppingItemSerializer
 
 from notifications.services import create_family_notification
 
+
 def get_user_family(user):
     if not hasattr(user, 'family_membership'):
         return None
 
     return user.family_membership.family
+
+
+def make_json_safe(value):
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+
+    if isinstance(value, dict):
+        return {
+            key: make_json_safe(item)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, list):
+        return [
+            make_json_safe(item)
+            for item in value
+        ]
+
+    return value
+
+
+def broadcast_activity_update(family, action, item_type, item=None, item_id=None):
+    channel_layer = get_channel_layer()
+
+    if not channel_layer or not family:
+        return
+
+    async_to_sync(channel_layer.group_send)(
+        f'family_activity_{family.id}',
+        {
+            'type': 'activity_event',
+            'action': action,
+            'item_type': item_type,
+            'item': make_json_safe(item),
+            'item_id': item_id,
+        }
+    )
 
 
 class ActivityOverviewView(APIView):
@@ -62,7 +104,6 @@ class FamilyTaskListCreateView(APIView):
             title=title,
             created_by=request.user
         )
-        
 
         create_family_notification(
             family=family,
@@ -72,8 +113,18 @@ class FamilyTaskListCreateView(APIView):
             created_by=request.user,
         )
 
+        task_data = FamilyTaskSerializer(task).data
+
+        broadcast_activity_update(
+            family=family,
+            action='create',
+            item_type='task',
+            item=task_data,
+            item_id=task.id
+        )
+
         return Response(
-            FamilyTaskSerializer(task).data,
+            task_data,
             status=status.HTTP_201_CREATED
         )
 
@@ -123,7 +174,17 @@ class FamilyTaskDetailView(APIView):
 
         task.save()
 
-        return Response(FamilyTaskSerializer(task).data)
+        task_data = FamilyTaskSerializer(task).data
+
+        broadcast_activity_update(
+            family=family,
+            action='update',
+            item_type='task',
+            item=task_data,
+            item_id=task.id
+        )
+
+        return Response(task_data)
 
     def delete(self, request, task_id):
         family = get_user_family(request.user)
@@ -144,6 +205,14 @@ class FamilyTaskDetailView(APIView):
                 {'error': 'Задача не найдена'},
                 status=status.HTTP_404_NOT_FOUND
             )
+
+        broadcast_activity_update(
+            family=family,
+            action='delete',
+            item_type='task',
+            item=None,
+            item_id=task_id
+        )
 
         return Response({'message': 'Задача удалена'})
 
@@ -174,8 +243,18 @@ class ShoppingItemListCreateView(APIView):
             created_by=request.user
         )
 
+        item_data = ShoppingItemSerializer(item).data
+
+        broadcast_activity_update(
+            family=family,
+            action='create',
+            item_type='shopping_item',
+            item=item_data,
+            item_id=item.id
+        )
+
         return Response(
-            ShoppingItemSerializer(item).data,
+            item_data,
             status=status.HTTP_201_CREATED
         )
 
@@ -225,7 +304,17 @@ class ShoppingItemDetailView(APIView):
 
         item.save()
 
-        return Response(ShoppingItemSerializer(item).data)
+        item_data = ShoppingItemSerializer(item).data
+
+        broadcast_activity_update(
+            family=family,
+            action='update',
+            item_type='shopping_item',
+            item=item_data,
+            item_id=item.id
+        )
+
+        return Response(item_data)
 
     def delete(self, request, item_id):
         family = get_user_family(request.user)
@@ -246,5 +335,13 @@ class ShoppingItemDetailView(APIView):
                 {'error': 'Продукт не найден'},
                 status=status.HTTP_404_NOT_FOUND
             )
+
+        broadcast_activity_update(
+            family=family,
+            action='delete',
+            item_type='shopping_item',
+            item=None,
+            item_id=item_id
+        )
 
         return Response({'message': 'Продукт удалён'})

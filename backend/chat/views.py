@@ -5,10 +5,14 @@ from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from families.models import FamilyMember
 from users.models import User
 from .models import Chat, Message
+from datetime import date, datetime
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from .serializers import (
     ChatSerializer,
     MessageSerializer,
@@ -19,6 +23,44 @@ from .serializers import (
     ChatPhotoSerializer,
 )
 
+def broadcast_chat_update(chat, message, request):
+    channel_layer = get_channel_layer()
+
+    if not channel_layer:
+        return
+
+    message_data = MessageSerializer(
+        message,
+        context={'request': request}
+    ).data
+
+    async_to_sync(channel_layer.group_send)(
+        f'chat_{chat.id}',
+        {
+            'type': 'chat_message',
+            'message': message_data,
+        }
+    )
+
+    for user in chat.members.all():
+        chat_data = ChatSerializer(
+            chat,
+            context={
+                'request': type(
+                    'Request',
+                    (),
+                    {'user': user}
+                )()
+            }
+        ).data
+
+        async_to_sync(channel_layer.group_send)(
+            f'user_chats_{user.id}',
+            {
+                'type': 'chat_list_update',
+                'chat': chat_data,
+            }
+        )
 
 def get_user_family(user):
     if not hasattr(user, 'family_membership'):
@@ -115,6 +157,73 @@ def get_chat_for_user(user, chat_id):
         )
 
     return chat, None
+
+def make_json_safe(value):
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+
+    if isinstance(value, dict):
+        return {
+            key: make_json_safe(item)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, list):
+        return [
+            make_json_safe(item)
+            for item in value
+        ]
+
+    return value
+
+
+def broadcast_chat_update(chat, message, request):
+    channel_layer = get_channel_layer()
+
+    if not channel_layer:
+        return
+
+    message_data = MessageSerializer(
+        message,
+        context={'request': request}
+    ).data
+
+    message_data = make_json_safe(message_data)
+
+    async_to_sync(channel_layer.group_send)(
+        f'chat_{chat.id}',
+        {
+            'type': 'chat_message',
+            'message': message_data,
+        }
+    )
+
+    for user in chat.members.all():
+        fake_request = type(
+            'Request',
+            (),
+            {
+                'user': user
+            }
+        )()
+
+        chat_data = ChatSerializer(
+            chat,
+            context={
+                'request': fake_request
+            }
+        ).data
+
+        chat_data = make_json_safe(chat_data)
+
+        async_to_sync(channel_layer.group_send)(
+            f'user_chats_{user.id}',
+            {
+                'type': 'chat_list_update',
+                'chat': chat_data,
+            }
+        )
+
 
 
 def get_family_users_by_ids(family, user_ids):
@@ -533,6 +642,12 @@ class SendMessageView(APIView):
         )
 
         chat.save(update_fields=['updated_at'])
+
+        broadcast_chat_update(
+            chat=chat,
+            message=message,
+            request=request
+        )
 
         serializer = MessageSerializer(
             message,

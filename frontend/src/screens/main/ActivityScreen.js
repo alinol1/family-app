@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -11,6 +11,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
@@ -28,6 +29,9 @@ import {
   updateShoppingItem,
   deleteShoppingItem,
 } from '../../api/activity';
+
+import { getAccessToken } from '../../api/tokenStorage';
+import { WS_BASE_URL } from '../../config/api';
 
 const MAIN_COLOR = '#9456FE';
 
@@ -51,8 +55,43 @@ function getApiErrorMessage(error) {
   return 'Сервер вернул ошибку.';
 }
 
+function sortActivityItems(items) {
+  return [...items].sort((a, b) => {
+    if (a.is_done !== b.is_done) {
+      return a.is_done ? 1 : -1;
+    }
+
+    const aTime = a.created_at || a.updated_at;
+    const bTime = b.created_at || b.updated_at;
+
+    return new Date(bTime) - new Date(aTime);
+  });
+}
+
+function upsertItem(list, item) {
+  if (!item?.id) {
+    return list;
+  }
+
+  const exists = list.some((current) => current.id === item.id);
+
+  if (exists) {
+    return sortActivityItems(
+      list.map((current) =>
+        current.id === item.id ? item : current
+      )
+    );
+  }
+
+  return sortActivityItems([item, ...list]);
+}
+
 export default function ActivityScreen() {
   const { screenPadding } = useLayout();
+
+  const socketRef = useRef(null);
+  const reconnectTimerRef = useRef(null);
+  const screenActiveRef = useRef(false);
 
   const [tasks, setTasks] = useState([]);
   const [products, setProducts] = useState([]);
@@ -65,36 +104,158 @@ export default function ActivityScreen() {
   const [inputValue, setInputValue] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const loadActivity = useCallback(async () => {
-    try {
-      const data = await getActivityOverview();
+  const applyActivityUpdate = useCallback((event) => {
+    const { action, item_type: itemType, item, item_id: itemId } = event;
 
-      setTasks(Array.isArray(data.tasks) ? data.tasks : []);
-      setProducts(Array.isArray(data.shopping_items) ? data.shopping_items : []);
-    } catch (error) {
-      Alert.alert('Активность', getApiErrorMessage(error));
+    if (itemType === 'task') {
+      setTasks((prev) => {
+        if (action === 'delete') {
+          return prev.filter((task) => task.id !== itemId);
+        }
+
+        if (action === 'create' || action === 'update') {
+          return upsertItem(prev, item);
+        }
+
+        return prev;
+      });
+
+      return;
+    }
+
+    if (itemType === 'shopping_item') {
+      setProducts((prev) => {
+        if (action === 'delete') {
+          return prev.filter((product) => product.id !== itemId);
+        }
+
+        if (action === 'create' || action === 'update') {
+          return upsertItem(prev, item);
+        }
+
+        return prev;
+      });
     }
   }, []);
 
-  const initialLoad = useCallback(async () => {
-    try {
-      setLoading(true);
-      await loadActivity();
-    } finally {
-      setLoading(false);
+  const connectActivityWebSocket = useCallback(async () => {
+    const token = await getAccessToken();
+
+    if (!token || !screenActiveRef.current) {
+      return;
     }
-  }, [loadActivity]);
+
+    if (
+      socketRef.current &&
+      (
+        socketRef.current.readyState === WebSocket.OPEN ||
+        socketRef.current.readyState === WebSocket.CONNECTING
+      )
+    ) {
+      return;
+    }
+
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+
+    const socket = new WebSocket(
+      `${WS_BASE_URL}/ws/activity/?token=${encodeURIComponent(token)}`
+    );
+
+    socketRef.current = socket;
+
+    socket.onopen = () => {
+      console.log('Activity WebSocket подключён');
+    };
+
+    socket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        if (data.type === 'activity_update') {
+          applyActivityUpdate(data);
+        }
+      } catch (error) {
+        console.log('Ошибка обработки Activity WebSocket:', error);
+      }
+    };
+
+    socket.onerror = (error) => {
+      console.log('Activity WebSocket ошибка:', error);
+    };
+
+    socket.onclose = () => {
+      console.log('Activity WebSocket закрыт');
+
+      if (socketRef.current === socket) {
+        socketRef.current = null;
+      }
+
+      if (screenActiveRef.current) {
+        reconnectTimerRef.current = setTimeout(() => {
+          connectActivityWebSocket();
+        }, 1500);
+      }
+    };
+  }, [applyActivityUpdate]);
+
+  const loadActivity = useCallback(async ({ silent = false } = {}) => {
+    try {
+      const hasData = tasks.length > 0 || products.length > 0;
+
+      if (!silent && !hasData) {
+        setLoading(true);
+      }
+
+      const data = await getActivityOverview();
+
+      if (!screenActiveRef.current) {
+        return;
+      }
+
+      setTasks(sortActivityItems(Array.isArray(data.tasks) ? data.tasks : []));
+      setProducts(sortActivityItems(Array.isArray(data.shopping_items) ? data.shopping_items : []));
+
+      await connectActivityWebSocket();
+    } catch (error) {
+      Alert.alert('Активность', getApiErrorMessage(error));
+    } finally {
+      if (screenActiveRef.current) {
+        setLoading(false);
+      }
+    }
+  }, [connectActivityWebSocket, tasks.length, products.length]);
 
   useFocusEffect(
     useCallback(() => {
-      initialLoad();
-    }, [initialLoad])
+      screenActiveRef.current = true;
+
+      const hasData = tasks.length > 0 || products.length > 0;
+
+      loadActivity({
+        silent: hasData,
+      });
+
+      return () => {
+        screenActiveRef.current = false;
+
+        if (reconnectTimerRef.current) {
+          clearTimeout(reconnectTimerRef.current);
+          reconnectTimerRef.current = null;
+        }
+
+        socketRef.current?.close();
+        socketRef.current = null;
+      };
+    }, [loadActivity, tasks.length, products.length])
   );
 
   const onRefresh = async () => {
     try {
       setRefreshing(true);
-      await loadActivity();
+      await loadActivity({ silent: true });
     } finally {
       setRefreshing(false);
     }
@@ -125,10 +286,10 @@ export default function ActivityScreen() {
 
       if (modalType === 'task') {
         const task = await createFamilyTask(title);
-        setTasks((prev) => [task, ...prev]);
+        setTasks((prev) => upsertItem(prev, task));
       } else {
         const item = await createShoppingItem(title);
-        setProducts((prev) => [item, ...prev]);
+        setProducts((prev) => upsertItem(prev, item));
       }
 
       closeModal();
@@ -140,33 +301,41 @@ export default function ActivityScreen() {
   };
 
   const toggleTask = async (task) => {
+    const optimisticTask = {
+      ...task,
+      is_done: !task.is_done,
+    };
+
+    setTasks((prev) => upsertItem(prev, optimisticTask));
+
     try {
       const updatedTask = await updateFamilyTask(task.id, {
         is_done: !task.is_done,
       });
 
-      setTasks((prev) =>
-        prev.map((item) =>
-          item.id === task.id ? updatedTask : item
-        )
-      );
+      setTasks((prev) => upsertItem(prev, updatedTask));
     } catch (error) {
+      setTasks((prev) => upsertItem(prev, task));
       Alert.alert('Задачи семьи', getApiErrorMessage(error));
     }
   };
 
   const toggleProduct = async (product) => {
+    const optimisticProduct = {
+      ...product,
+      is_done: !product.is_done,
+    };
+
+    setProducts((prev) => upsertItem(prev, optimisticProduct));
+
     try {
       const updatedProduct = await updateShoppingItem(product.id, {
         is_done: !product.is_done,
       });
 
-      setProducts((prev) =>
-        prev.map((item) =>
-          item.id === product.id ? updatedProduct : item
-        )
-      );
+      setProducts((prev) => upsertItem(prev, updatedProduct));
     } catch (error) {
+      setProducts((prev) => upsertItem(prev, product));
       Alert.alert('Покупки', getApiErrorMessage(error));
     }
   };
@@ -186,13 +355,21 @@ export default function ActivityScreen() {
           onPress: async () => {
             try {
               if (type === 'task') {
-                await deleteFamilyTask(item.id);
                 setTasks((prev) => prev.filter((task) => task.id !== item.id));
+                await deleteFamilyTask(item.id);
               } else {
+                setProducts((prev) =>
+                  prev.filter((product) => product.id !== item.id)
+                );
                 await deleteShoppingItem(item.id);
-                setProducts((prev) => prev.filter((product) => product.id !== item.id));
               }
             } catch (error) {
+              if (type === 'task') {
+                setTasks((prev) => upsertItem(prev, item));
+              } else {
+                setProducts((prev) => upsertItem(prev, item));
+              }
+
               Alert.alert('Активность', getApiErrorMessage(error));
             }
           },
@@ -252,6 +429,8 @@ export default function ActivityScreen() {
     );
   };
 
+  const hasAnyData = tasks.length > 0 || products.length > 0;
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="dark" />
@@ -261,7 +440,7 @@ export default function ActivityScreen() {
           Активность
         </Text>
 
-        {loading ? (
+        {loading && !hasAnyData ? (
           <View style={styles.loadingBlock}>
             <ActivityIndicator size="small" color={MAIN_COLOR} />
           </View>

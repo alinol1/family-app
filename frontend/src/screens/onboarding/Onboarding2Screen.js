@@ -26,14 +26,14 @@ const BASE = {
   topPadding: 69,
   illustrationToTitle: 32,
   titleToSubtitle: 30,
-  textToButtons: 64,
+  textToButtons: 24,
   buttonTextSize: 18,
   iconSize: 20,
 };
 
 // Минимумы и максимумы
 const LIMITS = {
-  titleSize: { min: 34, max: 44 },
+  titleSize: { min: 28, max: 44 },
   titleLineHeight: { min: 40, max: 50 },
   subtitleSize: { min: 15, max: 20 },
   subtitleLineHeight: { min: 21, max: 26 },
@@ -42,7 +42,7 @@ const LIMITS = {
   topPadding: { min: 24, max: 69 },
   illustrationToTitle: { min: 12, max: 32 },
   titleToSubtitle: { min: 12, max: 30 },
-  textToButtons: { min: 24, max: 64 },
+  textToButtons: { min: 2, max: 24 },
 };
 
 const TITLE_LINES_ESTIMATE = 2;
@@ -152,7 +152,7 @@ export default function Onboarding2Screen({ navigation }) {
         >
           <View style={styles.topContent}>
             <Image
-              source={require('../../../assets/images/onboarding-1.png')}
+              source={require('../../../assets/images/on2.png')}
               style={[styles.illustration, illustrationStyle]}
               resizeMode="contain"
             />

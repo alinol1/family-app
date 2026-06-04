@@ -4,6 +4,7 @@ from families.models import FamilyMember
 from .models import Chat, Message
 from users.models import User
 
+
 def get_user_display_name(user):
     if not user:
         return None
@@ -39,7 +40,7 @@ class ChatMemberSerializer(serializers.ModelSerializer):
 
         url = obj.avatar.url
 
-        if request and url.startswith('/'):
+        if request and url.startswith('/') and hasattr(request, 'build_absolute_uri'):
             return request.build_absolute_uri(url)
 
         return url
@@ -72,7 +73,7 @@ class FamilyAvailableMemberSerializer(serializers.ModelSerializer):
 
         url = obj.user.avatar.url
 
-        if request and url.startswith('/'):
+        if request and url.startswith('/') and hasattr(request, 'build_absolute_uri'):
             return request.build_absolute_uri(url)
 
         return url
@@ -120,7 +121,7 @@ class MessageSerializer(serializers.ModelSerializer):
 
         url = obj.sender.avatar.url
 
-        if request and url.startswith('/'):
+        if request and url.startswith('/') and hasattr(request, 'build_absolute_uri'):
             return request.build_absolute_uri(url)
 
         return url
@@ -133,7 +134,7 @@ class MessageSerializer(serializers.ModelSerializer):
 
         url = obj.media.url
 
-        if request and url.startswith('/'):
+        if request and url.startswith('/') and hasattr(request, 'build_absolute_uri'):
             return request.build_absolute_uri(url)
 
         return url
@@ -188,9 +189,11 @@ class ChatSerializer(serializers.ModelSerializer):
             return None
 
         return {
+            'id': last_message.id,
             'text': last_message.text,
             'sender': get_user_display_name(last_message.sender),
-            'created_at': last_message.created_at,
+            'sender_id': last_message.sender_id,
+            'created_at': last_message.created_at.isoformat(),
         }
 
     def get_unread_count(self, obj):
@@ -256,6 +259,7 @@ class ChatSerializer(serializers.ModelSerializer):
             return False
 
         return True
+
     def get_photo_url(self, obj):
         request = self.context.get('request')
 
@@ -264,10 +268,11 @@ class ChatSerializer(serializers.ModelSerializer):
 
         url = obj.photo.url
 
-        if request and url.startswith('/'):
+        if request and url.startswith('/') and hasattr(request, 'build_absolute_uri'):
             return request.build_absolute_uri(url)
 
         return url
+
 
 class CreateGroupChatSerializer(serializers.Serializer):
     title = serializers.CharField(max_length=150, required=False, allow_blank=True)
@@ -288,5 +293,7 @@ class AddChatMembersSerializer(serializers.Serializer):
         required=True,
         allow_empty=False
     )
+
+
 class ChatPhotoSerializer(serializers.Serializer):
     photo = serializers.ImageField(required=True)

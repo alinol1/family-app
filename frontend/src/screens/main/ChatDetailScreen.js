@@ -7,6 +7,7 @@ import {
   TextInput,
   FlatList,
   KeyboardAvoidingView,
+  Keyboard,
   Platform,
   ActivityIndicator,
   Alert,
@@ -110,12 +111,35 @@ export default function ChatDetailScreen({ navigation, route }) {
   const [currentUserId, setCurrentUserId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [socketConnected, setSocketConnected] = useState(false);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
 
   const scrollToBottom = useCallback(() => {
     setTimeout(() => {
       flatListRef.current?.scrollToEnd({ animated: true });
     }, 100);
   }, []);
+
+  useEffect(() => {
+    const showEvent =
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+
+    const hideEvent =
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showSub = Keyboard.addListener(showEvent, () => {
+      setKeyboardVisible(true);
+      scrollToBottom();
+    });
+
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardVisible(false);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, [scrollToBottom]);
 
   const connectWebSocket = useCallback(async () => {
     const token = await getAccessToken();
@@ -323,13 +347,15 @@ export default function ChatDetailScreen({ navigation, route }) {
     ? (chatInfo.chatSubtitle || formatMembersCount(chatInfo.membersCount))
     : 'Личный чат';
 
+  const bottomPadding = keyboardVisible ? 0 : insets.bottom;
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="dark" />
 
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={0}
       >
         <View style={styles.headerOuter}>
           <View style={[styles.headerInner, { paddingHorizontal: screenPadding }]}>
@@ -392,6 +418,8 @@ export default function ChatDetailScreen({ navigation, route }) {
               contentContainerStyle={styles.messagesList}
               showsVerticalScrollIndicator={false}
               onContentSizeChange={scrollToBottom}
+              onLayout={scrollToBottom}
+              keyboardShouldPersistTaps="handled"
             />
           )}
         </View>
@@ -401,7 +429,7 @@ export default function ChatDetailScreen({ navigation, route }) {
             styles.inputBarOuter,
             {
               paddingHorizontal: screenPadding,
-              paddingBottom: insets.bottom,
+              paddingBottom: bottomPadding,
             },
           ]}
         >

@@ -2,8 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
-import SplashScreen from '../screens/SplashScreen';
-
 import Onboarding1Screen from '../screens/onboarding/Onboarding1Screen';
 import Onboarding2Screen from '../screens/onboarding/Onboarding2Screen';
 import Onboarding3Screen from '../screens/onboarding/Onboarding3Screen';
@@ -58,6 +56,7 @@ export default function AppNavigator() {
 
   useEffect(() => {
     const checkStartRoute = async () => {
+      
       try {
         const authorized = await hasTokens();
         const onboardingDone = await getOnboardingCompleted();
@@ -80,7 +79,7 @@ export default function AppNavigator() {
   }, []);
 
   if (isLoading) {
-    return <SplashScreen />;
+    return <View style={{ flex: 1, backgroundColor: '#FFFFFF' }} />;
   }
 
   return (

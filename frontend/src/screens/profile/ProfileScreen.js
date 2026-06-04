@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
-  Image,
   ActivityIndicator,
 } from 'react-native';
 
@@ -19,6 +18,7 @@ import { fontFamily, fontSize } from '../../utils/fonts';
 import { useLayout } from '../../utils/useLayout';
 import { getProfile } from '../../api/profile';
 import { getMyFamily } from '../../api/family';
+import CachedAvatar from '../../components/CachedAvatar';
 
 import * as ImagePicker from 'expo-image-picker';
 import { uploadProfileAvatar } from '../../api/auth';
@@ -27,79 +27,66 @@ import { logout as logoutApi, deleteAccount } from '../../api/auth';
 
 export default function ProfileScreen({ navigation }) {
   const { screenPadding } = useLayout();
-
+  const hasLoadedRef = useRef(false);
+  const loadingRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState(null);
   const [family, setFamily] = useState(null);
   const [avatarUrl, setAvatarUrl] = useState(null);
   const [avatarUploading, setAvatarUploading] = useState(false);
+
+  const loadData = useCallback(async ({ silent = false } = {}) => {
+    if (loadingRef.current) {
+      return;
+    }
+
+    loadingRef.current = true;
+
+    try {
+      if (!silent && !hasLoadedRef.current) {
+        setLoading(true);
+      }
+
+      const profileData = await getProfile();
+
+      setProfile(profileData);
+      setAvatarUrl(profileData.avatar_url || profileData.avatar || null);
+
+      try {
+        const familyData = await getMyFamily();
+        setFamily(familyData);
+      } catch (familyError) {
+        console.log('Пользователь не состоит в семье или семья не загружена');
+        setFamily(null);
+      }
+
+      hasLoadedRef.current = true;
+    } catch (error) {
+      console.log('Ошибка загрузки профиля:', error);
+
+      if (!hasLoadedRef.current) {
+        Alert.alert('Ошибка', 'Не удалось загрузить профиль');
+      }
+    } finally {
+      loadingRef.current = false;
+      setLoading(false);
+    }
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
-      let isActive = true;
-
-      const loadData = async () => {
-        try {
-          setLoading(true);
-
-          const profileData = await getProfile();
-
-          if (!isActive) {
-            return;
-          }
-
-          setProfile(profileData);
-          setAvatarUrl(profileData.avatar_url || profileData.avatar || null);
-          try {
-            const familyData = await getMyFamily();
-
-            if (isActive) {
-              setFamily(familyData);
-            }
-          } catch (familyError) {
-            console.log('Пользователь не состоит в семье или семья не загружена');
-
-            if (isActive) {
-              setFamily(null);
-            }
-          }
-        } catch (error) {
-          console.log('Ошибка загрузки профиля');
-
-          Alert.alert(
-            'Ошибка',
-            'Не удалось загрузить профиль'
-          );
-        } finally {
-          if (isActive) {
-            setLoading(false);
-          }
-        }
-      };
-
-      loadData();
-
-      return () => {
-        isActive = false;
-      };
-    }, [])
+      loadData({
+        silent: hasLoadedRef.current,
+      });
+    }, [loadData])
   );
-
-  const openNotReady = (title) => {
-    Alert.alert(
-      title,
-      'Этот раздел подключим позже'
-    );
-  };
 
   const logout = () => {
     Alert.alert(
       'Выйти из аккаунта?',
       'После выхода нужно будет снова авторизоваться.',
       [
-        {
-          text: 'Отмена',
-          style: 'cancel',
-        },
+        { text: 'Отмена', style: 'cancel' },
         {
           text: 'Выйти',
           style: 'destructive',
@@ -121,9 +108,7 @@ export default function ProfileScreen({ navigation }) {
   };
 
   const getDisplayName = () => {
-    if (!profile) {
-      return 'Пользователь';
-    }
+    if (!profile) return 'Пользователь';
 
     const fullName = `${profile.first_name || ''} ${profile.last_name || ''}`.trim();
 
@@ -131,9 +116,7 @@ export default function ProfileScreen({ navigation }) {
   };
 
   const getInitials = () => {
-    if (!profile) {
-      return 'П';
-    }
+    if (!profile) return 'П';
 
     const firstLetter = profile.first_name ? profile.first_name[0] : '';
     const lastLetter = profile.last_name ? profile.last_name[0] : '';
@@ -146,25 +129,12 @@ export default function ProfileScreen({ navigation }) {
   };
 
   const getRoleTitle = () => {
-    if (!profile) {
-      return 'Участник семьи';
-    }
+    if (!profile) return 'Участник семьи';
 
-    if (family?.admin === profile.id) {
-      return 'Администратор семьи';
-    }
-
-    if (profile.role === 'admin') {
-      return 'Администратор';
-    }
-
-    if (profile.role === 'adult') {
-      return 'Взрослый участник';
-    }
-
-    if (profile.role === 'child') {
-      return 'Ребёнок';
-    }
+    if (family?.admin === profile.id) return 'Администратор семьи';
+    if (profile.role === 'admin') return 'Администратор';
+    if (profile.role === 'adult') return 'Взрослый участник';
+    if (profile.role === 'child') return 'Ребёнок';
 
     return 'Участник семьи';
   };
@@ -199,17 +169,13 @@ export default function ProfileScreen({ navigation }) {
 
     return `${bloodType} · ${allergies}`;
   };
-  
 
   const handleDeleteAccount = () => {
     Alert.alert(
       'Удалить аккаунт?',
       'Аккаунт будет удалён. Это действие нельзя отменить.',
       [
-        {
-          text: 'Отмена',
-          style: 'cancel',
-        },
+        { text: 'Отмена', style: 'cancel' },
         {
           text: 'Удалить',
           style: 'destructive',
@@ -234,7 +200,6 @@ export default function ProfileScreen({ navigation }) {
       ]
     );
   };
-
 
   const pickAvatar = async () => {
     try {
@@ -270,6 +235,11 @@ export default function ProfileScreen({ navigation }) {
 
       setAvatarUrl(data.avatar_url);
 
+      setProfile((prev) => ({
+        ...prev,
+        avatar_url: data.avatar_url,
+      }));
+
       Alert.alert('Профиль', 'Аватар обновлён.');
     } catch (error) {
       Alert.alert(
@@ -282,7 +252,6 @@ export default function ProfileScreen({ navigation }) {
       setAvatarUploading(false);
     }
   };
-
 
   const renderInfoRow = ({
     icon,
@@ -326,7 +295,7 @@ export default function ProfileScreen({ navigation }) {
     </View>
   );
 
-  if (loading) {
+  if (loading && !profile) {
     return (
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <StatusBar style="dark" />
@@ -378,18 +347,19 @@ export default function ProfileScreen({ navigation }) {
               onPress={pickAvatar}
               disabled={avatarUploading}
             >
-              {avatarUrl ? (
-                <Image
-                  source={{ uri: avatarUrl }}
-                  style={styles.avatarImage}
-                  resizeMode="cover"
-                />
-              ) : (
-                <View style={styles.avatarPlaceholder}>
-                  <Text style={styles.avatarLetters} allowFontScaling={false}>
-                    {getInitials()}
-                  </Text>
-                </View>
+              <CachedAvatar
+                uri={avatarUrl}
+                size={104}
+                backgroundColor="#F3ECFF"
+                icon="person"
+                iconSize={40}
+                iconColor="#9456FE"
+              />
+
+              {!avatarUrl && (
+                <Text style={styles.avatarLetters} allowFontScaling={false}>
+                  {getInitials()}
+                </Text>
               )}
 
               <View style={styles.avatarEditButton}>
@@ -508,6 +478,7 @@ export default function ProfileScreen({ navigation }) {
               Выйти из аккаунта
             </Text>
           </TouchableOpacity>
+
           <TouchableOpacity
             style={styles.deleteAccountButton}
             activeOpacity={0.8}
@@ -584,22 +555,8 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
 
-  avatarImage: {
-    width: 104,
-    height: 104,
-    borderRadius: 52,
-  },
-
-  avatarPlaceholder: {
-    width: 104,
-    height: 104,
-    borderRadius: 52,
-    backgroundColor: '#F3ECFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
   avatarLetters: {
+    position: 'absolute',
     fontFamily: fontFamily.medium,
     fontSize: 34,
     color: '#9456FE',
@@ -727,7 +684,6 @@ const styles = StyleSheet.create({
     fontSize: fontSize.bodyM,
     color: '#FA4B4B',
   },
-
 
   deleteAccountButton: {
     height: 56,

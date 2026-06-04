@@ -1,4 +1,5 @@
 import json
+from datetime import date, datetime
 
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
@@ -12,6 +13,25 @@ def get_user_family(user):
         return None
 
     return user.family_membership.family
+
+
+def make_json_safe(value):
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+
+    if isinstance(value, dict):
+        return {
+            key: make_json_safe(item)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, list):
+        return [
+            make_json_safe(item)
+            for item in value
+        ]
+
+    return value
 
 
 class ChatConsumer(AsyncWebsocketConsumer):
@@ -130,7 +150,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
         chat.save(update_fields=['updated_at'])
 
         serializer = MessageSerializer(message)
-        return serializer.data
+
+        return make_json_safe(serializer.data)
 
     @database_sync_to_async
     def get_chat_updates_for_members(self):
@@ -153,22 +174,24 @@ class ChatConsumer(AsyncWebsocketConsumer):
         updates = []
 
         for user in chat.members.all():
+            request = type(
+                'Request',
+                (),
+                {
+                    'user': user
+                }
+            )()
+
             serializer = ChatSerializer(
                 chat,
                 context={
-                    'request': type(
-                        'Request',
-                        (),
-                        {
-                            'user': user
-                        }
-                    )()
+                    'request': request
                 }
             )
 
             updates.append({
                 'user_id': user.id,
-                'chat': serializer.data,
+                'chat': make_json_safe(serializer.data),
             })
 
         return updates

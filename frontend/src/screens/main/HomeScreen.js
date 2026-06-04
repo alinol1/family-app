@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { fontFamily, fontSize } from '../../utils/fonts';
 import { useLayout } from '../../utils/useLayout';
 import { getProfile } from '../../api/auth';
+import CachedAvatar from '../../components/CachedAvatar';
 
 const AVATAR_SIZE = 60;
 const PILL_HEIGHT = 60;
@@ -44,11 +45,8 @@ export default function HomeScreen({ navigation }) {
 
           if (!isActive) return;
 
-          const nextName =
-            profile.first_name || 'Пользователь';
-
-          const nextAvatar =
-            profile.avatar_url || profile.avatar || null;
+          const nextName = profile.first_name || 'Пользователь';
+          const nextAvatar = profile.avatar_url || profile.avatar || null;
 
           setUserName((prev) =>
             prev !== nextName ? nextName : prev
@@ -79,7 +77,7 @@ export default function HomeScreen({ navigation }) {
       textColor: '#FFFFFF',
       iconColor: '#9452FE',
       borderColor: '#9452FE',
-      illustration: require('../../../assets/images/card-documents.png'),
+      illustration: require('../../../assets/images/file3.png'),
     },
     {
       name: 'Финансы',
@@ -89,7 +87,7 @@ export default function HomeScreen({ navigation }) {
       textColor: '#262626',
       iconColor: '#AAAAAA',
       borderColor: '#E6E6E6',
-      illustration: require('../../../assets/images/card-finance.png'),
+      illustration: require('../../../assets/images/mon03.png'),
     },
     {
       name: 'Фотографии',
@@ -99,7 +97,7 @@ export default function HomeScreen({ navigation }) {
       textColor: '#FFFFFF',
       iconColor: '#E96847',
       borderColor: '#E96847',
-      illustration: require('../../../assets/images/card-photos.png'),
+      illustration: require('../../../assets/images/phot03.png'),
     },
     {
       name: 'Семейное древо',
@@ -109,7 +107,7 @@ export default function HomeScreen({ navigation }) {
       textColor: '#262626',
       iconColor: '#AAAAAA',
       borderColor: '#E6E6E6',
-      illustration: require('../../../assets/images/card-tree.png'),
+      illustration: require('../../../assets/images/tree03.png'),
     },
   ];
 
@@ -120,21 +118,18 @@ export default function HomeScreen({ navigation }) {
       activeOpacity={0.85}
       onPress={() => navigation.navigate(module.screen)}
     >
-      {/* Иллюстрация справа */}
       <Image
         source={module.illustration}
         style={styles.cardIllustration}
         resizeMode="contain"
       />
 
-      {/* Верхняя часть — иконка */}
       <View style={styles.cardTop}>
         <View style={styles.cardIconCircle}>
           <Ionicons name={module.icon} size={22} color={module.iconColor} />
         </View>
       </View>
 
-      {/* Нижняя часть — название + стрелка */}
       <View style={styles.cardBottom}>
         <Text style={[styles.cardTitle, { color: module.textColor }]} allowFontScaling={false}>
           {module.name}
@@ -152,8 +147,6 @@ export default function HomeScreen({ navigation }) {
       <StatusBar style="dark" />
 
       <View style={[styles.container, { paddingHorizontal: screenPadding }]}>
-
-        {/* Статичный верхний блок */}
         <View style={styles.topBar}>
           <TouchableOpacity
             style={styles.welcomePill}
@@ -161,21 +154,14 @@ export default function HomeScreen({ navigation }) {
             onPress={() => navigation.navigate('Профиль')}
           >
             <View style={styles.avatarContainer}>
-              {userAvatar ? (
-                <Image
-                  source={{
-                    uri: userAvatar,
-                    cache: 'force-cache',
-                  }}
-                  style={styles.avatar}
-                />
-              ) : (
-                <View style={styles.avatarPlaceholder}>
-                  <Text style={styles.avatarPlaceholderText} allowFontScaling={false}>
-                    {userName ? userName.charAt(0).toUpperCase() : '?'}
-                  </Text>
-                </View>
-              )}
+              <CachedAvatar
+                uri={userAvatar}
+                size={AVATAR_SIZE}
+                backgroundColor="#C39EFF"
+                icon="person"
+                iconSize={27}
+                iconColor="#FFFFFF"
+              />
             </View>
 
             <View style={styles.welcomeTextBlock}>
@@ -197,12 +183,10 @@ export default function HomeScreen({ navigation }) {
           </TouchableOpacity>
         </View>
 
-        {/* Статичный заголовок */}
         <Text style={styles.screenTitle} allowFontScaling={false}>
           Главная
         </Text>
 
-        {/* Скроллящийся контент */}
         <ScrollView
           style={styles.scrollArea}
           contentContainerStyle={styles.scrollContent}
@@ -211,7 +195,6 @@ export default function HomeScreen({ navigation }) {
         >
           {modules.map((module, index) => renderModuleCard(module, index))}
         </ScrollView>
-
       </View>
     </SafeAreaView>
   );
@@ -228,7 +211,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
 
-  // Верхний блок
   topBar: {
     width: '100%',
     flexDirection: 'row',
@@ -252,26 +234,6 @@ const styles = StyleSheet.create({
     height: AVATAR_SIZE,
     borderRadius: AVATAR_SIZE / 2,
     overflow: 'hidden',
-  },
-
-  avatar: {
-    width: AVATAR_SIZE,
-    height: AVATAR_SIZE,
-  },
-
-  avatarPlaceholder: {
-    width: AVATAR_SIZE,
-    height: AVATAR_SIZE,
-    borderRadius: AVATAR_SIZE / 2,
-    backgroundColor: '#C39EFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
-  avatarPlaceholderText: {
-    fontFamily: fontFamily.bold,
-    fontSize: 24,
-    color: '#FFFFFF',
   },
 
   welcomeTextBlock: {
@@ -300,7 +262,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 
-  // Заголовок
   screenTitle: {
     fontFamily: fontFamily.regular,
     fontSize: fontSize.titleL,
@@ -309,7 +270,6 @@ const styles = StyleSheet.create({
     paddingLeft: 2,
   },
 
-  // Скролл
   scrollArea: {
     flex: 1,
     marginTop: 25,
@@ -320,7 +280,6 @@ const styles = StyleSheet.create({
     paddingBottom: 120,
   },
 
-  // Карточка модуля
   card: {
     width: '100%',
     height: CARD_HEIGHT,
@@ -351,7 +310,6 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontFamily: fontFamily.regular,
     fontSize: fontSize.titleM,
-    // color задаётся динамически
   },
 
   arrowPill: {
@@ -362,14 +320,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     justifyContent: 'center',
     alignItems: 'center',
-    // borderColor задаётся динамически под цвет плашки
   },
 
   cardIllustration: {
-  position: 'absolute',
-  right: 16,
-  bottom: 16,
-  width: 150,
-  height: 110,
-},
+    position: 'absolute',
+    right: 1,
+    bottom: 16,
+    width: 150,
+    height: 110,
+  },
 });

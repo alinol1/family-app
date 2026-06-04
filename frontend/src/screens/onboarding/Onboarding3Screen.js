@@ -26,7 +26,7 @@ const BASE = {
   topPadding: 69,
   illustrationToTitle: 32,
   titleToSubtitle: 30,
-  textToButtons: 64,
+  textToButtons: 32,
   buttonTextSize: 18,
   iconSize: 20,
 };
@@ -42,7 +42,7 @@ const LIMITS = {
   topPadding: { min: 24, max: 69 },
   illustrationToTitle: { min: 12, max: 32 },
   titleToSubtitle: { min: 12, max: 30 },
-  textToButtons: { min: 24, max: 64 },
+  textToButtons: { min: 24, max: 32 },
 };
 
 const TITLE_LINES_ESTIMATE = 2;
@@ -151,7 +151,7 @@ export default function Onboarding3Screen({ navigation }) {
         >
           <View style={styles.topContent}>
             <Image
-              source={require('../../../assets/images/onboarding-1.png')}
+              source={require('../../../assets/images/on3.png')}
               style={[styles.illustration, illustrationStyle]}
               resizeMode="contain"
             />
@@ -172,7 +172,7 @@ export default function Onboarding3Screen({ navigation }) {
                 ]}
                 allowFontScaling={false}
               >
-                Финансы, документы и фото — под рукой
+                Финансы, документы — под рукой
               </Text>
 
               <Text
