@@ -56,17 +56,16 @@ export default function AppNavigator() {
 
   useEffect(() => {
     const checkStartRoute = async () => {
-      
       try {
         const authorized = await hasTokens();
         const onboardingDone = await getOnboardingCompleted();
 
-        if (authorized) {
-          setInitialRouteName('MainTabs');
-        } else if (onboardingDone) {
-          setInitialRouteName('Login');
-        } else {
+        if (!onboardingDone) {
           setInitialRouteName('Onboarding1');
+        } else if (authorized) {
+          setInitialRouteName('MainTabs');
+        } else {
+          setInitialRouteName('Login');
         }
       } catch (error) {
         setInitialRouteName('Onboarding1');
