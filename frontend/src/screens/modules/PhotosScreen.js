@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -28,6 +28,16 @@ import {
   createPhotoAlbum,
 } from '../../api/photos';
 
+function chunkArray(array, size) {
+  const result = [];
+
+  for (let index = 0; index < array.length; index += size) {
+    result.push(array.slice(index, index + size));
+  }
+
+  return result;
+}
+
 export default function PhotosScreen({ navigation }) {
   const { screenPadding } = useLayout();
 
@@ -39,6 +49,10 @@ export default function PhotosScreen({ navigation }) {
 
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [albumTitle, setAlbumTitle] = useState('');
+
+  const albumRows = useMemo(() => {
+    return chunkArray(albums, 2);
+  }, [albums]);
 
   const loadAlbums = async (showLoader = true) => {
     try {
@@ -126,8 +140,9 @@ export default function PhotosScreen({ navigation }) {
     });
   };
 
-  const renderAlbum = ({ item }) => (
+  const renderAlbumCard = (item) => (
     <TouchableOpacity
+      key={String(item.id)}
       style={styles.albumCard}
       activeOpacity={0.85}
       onPress={() => openAlbum(item)}
@@ -166,6 +181,14 @@ export default function PhotosScreen({ navigation }) {
         </Text>
       </View>
     </TouchableOpacity>
+  );
+
+  const renderAlbumRow = ({ item }) => (
+    <View style={styles.row}>
+      {item.map((album) => renderAlbumCard(album))}
+
+      {item.length === 1 && <View style={styles.albumCardPlaceholder} />}
+    </View>
   );
 
   const renderEmpty = () => {
@@ -245,12 +268,10 @@ export default function PhotosScreen({ navigation }) {
         </View>
 
         <FlatList
-          key="albums-2-columns"
-          data={albums}
-          keyExtractor={(item) => String(item.id)}
-          renderItem={renderAlbum}
-          numColumns={2}
-          columnWrapperStyle={albums.length > 0 ? styles.row : null}
+          key="albums-manual-rows"
+          data={albumRows}
+          keyExtractor={(_, index) => `album-row-${index}`}
+          renderItem={renderAlbumRow}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.listContent}
           ListEmptyComponent={renderEmpty}
@@ -373,7 +394,9 @@ const styles = StyleSheet.create({
   },
 
   row: {
-    justifyContent: 'space-between',
+    width: '100%',
+    flexDirection: 'row',
+    marginBottom: 14,
   },
 
   albumCard: {
@@ -381,7 +404,11 @@ const styles = StyleSheet.create({
     borderRadius: 26,
     backgroundColor: '#F7F7F7',
     padding: 14,
-    marginBottom: 14,
+    marginRight: '4%',
+  },
+
+  albumCardPlaceholder: {
+    width: '48%',
   },
 
   albumPreview: {

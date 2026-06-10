@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -39,6 +39,16 @@ function getCleanPhotoTitle(fileName = '') {
   return fileName.substring(0, fileName.lastIndexOf('.')) || 'Фотография';
 }
 
+function chunkArray(array, size) {
+  const result = [];
+
+  for (let index = 0; index < array.length; index += size) {
+    result.push(array.slice(index, index + size));
+  }
+
+  return result;
+}
+
 export default function PhotoAlbumScreen({ navigation, route }) {
   const { screenPadding } = useLayout();
 
@@ -52,6 +62,10 @@ export default function PhotoAlbumScreen({ navigation, route }) {
   const [isAddingPhoto, setIsAddingPhoto] = useState(false);
 
   const [addMenuVisible, setAddMenuVisible] = useState(false);
+
+  const photoRows = useMemo(() => {
+    return chunkArray(photos, 3);
+  }, [photos]);
 
   const loadPhotos = async (showLoader = true) => {
     if (!albumId) {
@@ -237,14 +251,18 @@ export default function PhotoAlbumScreen({ navigation, route }) {
     }
   };
 
-  const renderPhoto = ({ item }) => {
-    const photoUri = item.image_url || null;
+  const renderPhotoCard = (photo, indexInRow) => {
+    const photoUri = photo.image_url || null;
 
     return (
       <TouchableOpacity
-        style={styles.photoCard}
+        key={String(photo.id)}
+        style={[
+          styles.photoCard,
+          indexInRow !== 2 && styles.photoCardWithRightGap,
+        ]}
         activeOpacity={0.85}
-        onPress={() => openPhoto(item)}
+        onPress={() => openPhoto(photo)}
       >
         {photoUri ? (
           <Image
@@ -263,11 +281,27 @@ export default function PhotoAlbumScreen({ navigation, route }) {
           allowFontScaling={false}
           numberOfLines={1}
         >
-          {item.title || 'Фотография'}
+          {photo.title || 'Фотография'}
         </Text>
       </TouchableOpacity>
     );
   };
+
+  const renderPhotoRow = ({ item }) => (
+    <View style={styles.row}>
+      {item.map((photo, index) => renderPhotoCard(photo, index))}
+
+      {item.length < 3 && Array.from({ length: 3 - item.length }).map((_, index) => (
+        <View
+          key={`placeholder-${index}`}
+          style={[
+            styles.photoCardPlaceholder,
+            item.length + index !== 2 && styles.photoCardWithRightGap,
+          ]}
+        />
+      ))}
+    </View>
+  );
 
   const renderEmpty = () => {
     if (isLoading) return null;
@@ -349,12 +383,10 @@ export default function PhotoAlbumScreen({ navigation, route }) {
         </View>
 
         <FlatList
-          key="photos-3-columns"
-          data={photos}
-          keyExtractor={(item) => String(item.id)}
-          renderItem={renderPhoto}
-          numColumns={3}
-          columnWrapperStyle={photos.length > 0 ? styles.row : null}
+          key="photos-manual-3-columns"
+          data={photoRows}
+          keyExtractor={(_, index) => `photo-row-${index}`}
+          renderItem={renderPhotoRow}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.listContent}
           ListEmptyComponent={renderEmpty}
@@ -482,13 +514,22 @@ const styles = StyleSheet.create({
   },
 
   row: {
-    justifyContent: 'space-between',
+    width: '100%',
+    flexDirection: 'row',
+    marginBottom: 18,
   },
 
   photoCard: {
     width: '31%',
-    marginBottom: 18,
     alignItems: 'center',
+  },
+
+  photoCardWithRightGap: {
+    marginRight: '3.5%',
+  },
+
+  photoCardPlaceholder: {
+    width: '31%',
   },
 
   photoPlaceholder: {

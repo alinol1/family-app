@@ -17,6 +17,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Circle } from 'react-native-svg';
+import MapView, { Marker } from 'react-native-maps';
 
 import { fontFamily, fontSize } from '../../utils/fonts';
 import { useLayout } from '../../utils/useLayout';
@@ -46,6 +47,7 @@ const CIRCLE_SIZE = 112;
 const STROKE_WIDTH = 7;
 
 const ACTIVE_SOS_STATUSES = ['sent', 'received', 'confirmed'];
+const IS_MAP_SUPPORTED = Platform.OS !== 'web';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
@@ -105,6 +107,20 @@ function formatActiveTime(seconds) {
   const restSeconds = seconds % 60;
 
   return `${String(minutes).padStart(2, '0')}:${String(restSeconds).padStart(2, '0')}`;
+}
+
+function getSignalElapsedSeconds(signal) {
+  if (!signal?.created_at) {
+    return 0;
+  }
+
+  const createdAt = new Date(signal.created_at).getTime();
+
+  if (Number.isNaN(createdAt)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.floor((Date.now() - createdAt) / 1000));
 }
 
 function isSignalActive(signal) {
@@ -256,14 +272,18 @@ export default function SOSScreen({ navigation }) {
     : 'Вы здесь';
 
   useEffect(() => {
-    if (!isActiveSOS) return;
+    if (!isActiveSOS || !activeSignal) return;
 
-    const interval = setInterval(() => {
-      setActiveSeconds((prev) => prev + 1);
-    }, 1000);
+    const updateTimer = () => {
+      setActiveSeconds(getSignalElapsedSeconds(activeSignal));
+    };
+
+    updateTimer();
+
+    const interval = setInterval(updateTimer, 1000);
 
     return () => clearInterval(interval);
-  }, [isActiveSOS]);
+  }, [isActiveSOS, activeSignal]);
 
   const clearReconnectTimer = () => {
     if (reconnectTimerRef.current) {
@@ -302,7 +322,7 @@ export default function SOSScreen({ navigation }) {
     setConfirmedByNames(signal?.confirmed_by_names || []);
     setIncomingSenderName(signal?.sender_name || 'Пользователь');
     setSosState('senderActive');
-    setActiveSeconds(0);
+    setActiveSeconds(getSignalElapsedSeconds(signal));
     setIncomingSOSVisible(false);
   };
 
@@ -316,7 +336,7 @@ export default function SOSScreen({ navigation }) {
     setConfirmedByNames(signal?.confirmed_by_names || []);
     setIncomingSenderName(signal?.sender_name || 'Пользователь');
     setSosState('receiverActive');
-    setActiveSeconds(0);
+    setActiveSeconds(getSignalElapsedSeconds(signal));
 
     if (showModal) {
       setIncomingSOSVisible(true);
@@ -348,6 +368,7 @@ export default function SOSScreen({ navigation }) {
 
       setActiveSignal(signal);
       setConfirmedByNames(signal.confirmed_by_names || []);
+      setActiveSeconds(getSignalElapsedSeconds(signal));
       setIncomingSOSVisible(false);
 
       if (isCurrentUserSender) {
@@ -525,6 +546,7 @@ export default function SOSScreen({ navigation }) {
       address: currentLocation?.accuracy
         ? `Точность: ${Math.round(currentLocation.accuracy)} м`
         : 'Местоположение уточняется',
+      created_at: new Date().toISOString(),
     };
 
     activateSenderScreen(temporarySignal);
@@ -556,7 +578,6 @@ export default function SOSScreen({ navigation }) {
       sendingSOSRef.current = false;
     }
   };
-
 
   const cancelSOSRequest = async () => {
     if (!activeSignal?.id || cancellingSOSRef.current) return;
@@ -590,6 +611,7 @@ export default function SOSScreen({ navigation }) {
 
       setActiveSignal(signal);
       setConfirmedByNames(signal.confirmed_by_names || []);
+      setActiveSeconds(getSignalElapsedSeconds(signal));
       setIncomingSOSVisible(false);
       setSosState('receiverActive');
     } catch (error) {
@@ -846,15 +868,33 @@ export default function SOSScreen({ navigation }) {
         </View>
 
         <View style={[styles.mapContainer, { top: m.topBarHeight }]}>
-          <View style={styles.map}>
-            <View style={styles.mapFallbackOverlay}>
-              <Ionicons name="location-outline" size={32} color="#858585" />
+          {IS_MAP_SUPPORTED ? (
+            <MapView
+              style={styles.map}
+              region={mapRegion}
+              showsUserLocation={!isReceiverActive}
+              showsMyLocationButton={false}
+              showsCompass={false}
+              toolbarEnabled={false}
+            >
+              {hasMapLocation && (
+                <Marker
+                  coordinate={mapLocation}
+                  title={mapMarkerTitle}
+                />
+              )}
+            </MapView>
+          ) : (
+            <View style={styles.map}>
+              <View style={styles.mapFallbackOverlay}>
+                <Ionicons name="location-outline" size={32} color="#858585" />
 
-              <Text style={styles.mapFallbackText} allowFontScaling={false}>
-                Карта временно отключена
-              </Text>
+                <Text style={styles.mapFallbackText} allowFontScaling={false}>
+                  Карта временно отключена
+                </Text>
+              </View>
             </View>
-          </View>
+          )}
         </View>
 
         <Animated.View
