@@ -514,8 +514,23 @@ export default function SOSScreen({ navigation }) {
 
     sendingSOSRef.current = true;
 
+    const temporarySignal = {
+      id: null,
+      sender: currentUserIdRef.current,
+      sender_name: 'Вы',
+      status: 'sent',
+      confirmed_by_names: [],
+      latitude: currentLocation?.latitude || null,
+      longitude: currentLocation?.longitude || null,
+      address: currentLocation?.accuracy
+        ? `Точность: ${Math.round(currentLocation.accuracy)} м`
+        : 'Местоположение уточняется',
+    };
+
+    activateSenderScreen(temporarySignal);
+
     try {
-      const location = await detectCurrentLocation();
+      const location = currentLocation || await detectCurrentLocation();
 
       const signal = await sendSOS(
         location?.latitude || null,
@@ -529,6 +544,8 @@ export default function SOSScreen({ navigation }) {
     } catch (error) {
       console.log('Ошибка отправки SOS:', error.response?.data || error);
 
+      resetToNormal();
+
       Alert.alert(
         'SOS',
         error.response?.data?.error ||
@@ -539,6 +556,7 @@ export default function SOSScreen({ navigation }) {
       sendingSOSRef.current = false;
     }
   };
+
 
   const cancelSOSRequest = async () => {
     if (!activeSignal?.id || cancellingSOSRef.current) return;
