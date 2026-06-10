@@ -45,7 +45,7 @@ const HOLD_DURATION = 3000;
 const CIRCLE_SIZE = 112;
 const STROKE_WIDTH = 7;
 
-const ACTIVE_SOS_STATUSES = ['sent', 'received'];
+const ACTIVE_SOS_STATUSES = ['sent', 'received', 'confirmed'];
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
@@ -348,13 +348,14 @@ export default function SOSScreen({ navigation }) {
 
       setActiveSignal(signal);
       setConfirmedByNames(signal.confirmed_by_names || []);
+      setIncomingSOSVisible(false);
 
       if (isCurrentUserSender) {
         setSosState('senderActive');
-        return;
+      } else {
+        setSosState('receiverActive');
       }
 
-      resetToNormal();
       return;
     }
 
@@ -572,8 +573,7 @@ export default function SOSScreen({ navigation }) {
       setActiveSignal(signal);
       setConfirmedByNames(signal.confirmed_by_names || []);
       setIncomingSOSVisible(false);
-
-      resetToNormal();
+      setSosState('receiverActive');
     } catch (error) {
       console.log('Ошибка подтверждения SOS:', error.response?.data || error);
 

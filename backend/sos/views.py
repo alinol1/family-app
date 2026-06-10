@@ -17,7 +17,7 @@ from .serializers import SOSSignalSerializer
 from notifications.services import create_family_notification
 
 
-ACTIVE_SOS_STATUSES = ['sent', 'received']
+ACTIVE_SOS_STATUSES = ['sent', 'received', 'confirmed']
 
 
 def get_user_family(user):

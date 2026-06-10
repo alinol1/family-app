@@ -18,6 +18,7 @@ class SOSSignal(models.Model):
     ACTIVE_STATUSES = [
         STATUS_SENT,
         STATUS_RECEIVED,
+        STATUS_CONFIRMED,
     ]
 
     STATUS_CHOICES = [
