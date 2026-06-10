@@ -45,7 +45,7 @@ import FamilyTreePersonDetailScreen from '../screens/modules/FamilyTreePersonDet
 
 import { PresenceProvider } from '../context/PresenceContext';
 
-import { hasTokens } from '../api/tokenStorage';
+import { getAccessToken } from '../api/tokenStorage';
 import { getOnboardingCompleted } from '../api/onboardingStorage';
 
 const Stack = createNativeStackNavigator();
@@ -53,28 +53,58 @@ const Stack = createNativeStackNavigator();
 export default function AppNavigator() {
   const [isLoading, setIsLoading] = useState(true);
   const [initialRouteName, setInitialRouteName] = useState('Onboarding1');
+  const [isAuthorized, setIsAuthorized] = useState(false);
 
   useEffect(() => {
+    let isMounted = true;
+
     const checkStartRoute = async () => {
       try {
-        const authorized = await hasTokens();
-        const onboardingDone = await getOnboardingCompleted();
+        const onboardingCompleted = await getOnboardingCompleted();
 
-        if (!onboardingDone) {
+        if (!isMounted) {
+          return;
+        }
+
+        if (!onboardingCompleted) {
+          setIsAuthorized(false);
           setInitialRouteName('Onboarding1');
-        } else if (authorized) {
+          setIsLoading(false);
+          return;
+        }
+
+        const accessToken = await getAccessToken();
+
+        if (!isMounted) {
+          return;
+        }
+
+        if (accessToken) {
+          setIsAuthorized(true);
           setInitialRouteName('MainTabs');
         } else {
+          setIsAuthorized(false);
           setInitialRouteName('Login');
         }
       } catch (error) {
-        setInitialRouteName('Onboarding1');
+        console.log('Ошибка определения стартового экрана:', error);
+
+        if (isMounted) {
+          setIsAuthorized(false);
+          setInitialRouteName('Onboarding1');
+        }
       } finally {
-        setIsLoading(false);
+        if (isMounted) {
+          setIsLoading(false);
+        }
       }
     };
 
     checkStartRoute();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   if (isLoading) {
@@ -82,7 +112,7 @@ export default function AppNavigator() {
   }
 
   return (
-    <PresenceProvider enabled={true}>
+    <PresenceProvider enabled={isAuthorized}>
       <View style={{ flex: 1 }}>
         <Stack.Navigator
           initialRouteName={initialRouteName}
@@ -92,7 +122,15 @@ export default function AppNavigator() {
           <Stack.Screen name="Onboarding2" component={Onboarding2Screen} />
           <Stack.Screen name="Onboarding3" component={Onboarding3Screen} />
 
-          <Stack.Screen name="Login" component={LoginScreen} />
+          <Stack.Screen name="Login">
+            {(props) => (
+              <LoginScreen
+                {...props}
+                onLoginSuccess={() => setIsAuthorized(true)}
+              />
+            )}
+          </Stack.Screen>
+
           <Stack.Screen name="Register" component={RegisterScreen} />
           <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
           <Stack.Screen name="ResetPasswordSent" component={ResetPasswordSentScreen} />

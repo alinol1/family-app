@@ -60,7 +60,7 @@ function getMetrics(screenHeight) {
   };
 }
 
-export default function LoginScreen({ navigation }) {
+export default function LoginScreen({ navigation, onLoginSuccess }) {
   const { screenPadding, height } = useLayout();
   const s = getMetrics(height);
 
@@ -83,6 +83,10 @@ export default function LoginScreen({ navigation }) {
 
     try {
       await login(email.trim().toLowerCase(), password);
+
+      if (typeof onLoginSuccess === 'function') {
+        onLoginSuccess();
+      }
 
       navigation.reset({
         index: 0,
@@ -122,17 +126,13 @@ export default function LoginScreen({ navigation }) {
           showsVerticalScrollIndicator={false}
           bounces={false}
         >
-          {/* Заголовок */}
           <View style={[styles.titleContainer, { marginTop: s.topOffset }]}>
             <Text style={styles.title} allowFontScaling={false}>
               Вход
             </Text>
           </View>
 
-          {/* Поля ввода */}
           <View style={{ marginTop: s.titleToFirstField }}>
-
-            {/* Почта */}
             <View style={styles.fieldBlock}>
               <Text style={styles.fieldLabel} allowFontScaling={false}>
                 Почта
@@ -151,7 +151,6 @@ export default function LoginScreen({ navigation }) {
               />
             </View>
 
-            {/* Пароль */}
             <View style={[styles.fieldBlock, { marginTop: s.fieldGap }]}>
               <Text style={styles.fieldLabel} allowFontScaling={false}>
                 Пароль
@@ -170,7 +169,6 @@ export default function LoginScreen({ navigation }) {
             </View>
           </View>
 
-          {/* Кнопка Войти */}
           <TouchableOpacity
             style={[
               styles.loginButton,
@@ -190,7 +188,6 @@ export default function LoginScreen({ navigation }) {
             )}
           </TouchableOpacity>
 
-          {/* Забыли пароль */}
           <TouchableOpacity
             style={styles.forgotContainer}
             activeOpacity={0.7}
@@ -201,13 +198,8 @@ export default function LoginScreen({ navigation }) {
               Забыли пароль?
             </Text>
           </TouchableOpacity>
-
-
         </ScrollView>
 
-
-
-        {/* Нет аккаунта — прижато к низу */}
         <View style={[styles.linkContainer, { paddingHorizontal: screenPadding }]}>
           <Text style={styles.linkText} allowFontScaling={false}>
             Нет аккаунта?{' '}
@@ -222,7 +214,6 @@ export default function LoginScreen({ navigation }) {
             </Text>
           </TouchableOpacity>
         </View>
-
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -326,6 +317,4 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: '#9456FE',
   },
-
-
 });

@@ -182,9 +182,18 @@ export default function ChatDetailScreen({ navigation, route }) {
       console.log('WebSocket ошибка:', error);
     };
 
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       setSocketConnected(false);
-      console.log('WebSocket чата закрыт');
+
+      console.log(
+        'WebSocket чата закрыт:',
+        'code =',
+        event.code,
+        'reason =',
+        event.reason,
+        'wasClean =',
+        event.wasClean
+      );
 
       if (socketRef.current === socket) {
         socketRef.current = null;
