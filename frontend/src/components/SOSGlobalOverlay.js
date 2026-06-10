@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   Animated,
-  Platform,
 } from 'react-native';
 
 import { Ionicons } from '@expo/vector-icons';
@@ -40,6 +39,8 @@ function getEventUser(data, key) {
 
 export default function SOSGlobalOverlay() {
   const socketRef = useRef(null);
+  const reconnectTimerRef = useRef(null);
+  const isMountedRef = useRef(false);
   const currentUserIdRef = useRef(null);
   const toastTimerRef = useRef(null);
 
@@ -48,8 +49,15 @@ export default function SOSGlobalOverlay() {
 
   const [toastText, setToastText] = useState('');
 
+  const clearReconnectTimer = () => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  };
+
   const showToast = (text) => {
-    if (!text) return;
+    if (!text || !isMountedRef.current) return;
 
     if (toastTimerRef.current) {
       clearTimeout(toastTimerRef.current);
@@ -128,13 +136,21 @@ export default function SOSGlobalOverlay() {
   const connectSocket = async () => {
     const token = await getAccessToken();
 
-    if (!token) {
+    if (!token || !isMountedRef.current) {
       return;
     }
 
-    if (socketRef.current) {
-      socketRef.current.close();
+    if (
+      socketRef.current &&
+      (
+        socketRef.current.readyState === WebSocket.OPEN ||
+        socketRef.current.readyState === WebSocket.CONNECTING
+      )
+    ) {
+      return;
     }
+
+    clearReconnectTimer();
 
     const socket = new WebSocket(
       `${WS_BASE_URL}/ws/sos/?token=${encodeURIComponent(token)}`
@@ -150,7 +166,7 @@ export default function SOSGlobalOverlay() {
       try {
         const data = JSON.parse(event.data);
 
-        // Большой SOS-сигнал здесь НЕ показываем.
+        // Большой SOS-сигнал здесь не показываем.
         // Он остаётся в SOSScreen.
         if (data.type === 'sos_alert') {
           return;
@@ -170,26 +186,42 @@ export default function SOSGlobalOverlay() {
     };
 
     socket.onerror = (error) => {
-      console.log('Global SOS mini notifications ошибка:', error);
+      console.log('Global SOS mini notifications ошибка:', error?.message || error);
     };
 
-    socket.onclose = () => {
-      console.log('Global SOS mini notifications закрыты');
+    socket.onclose = (event) => {
+      console.log(
+        'Global SOS mini notifications закрыты:',
+        'code =',
+        event.code,
+        'reason =',
+        event.reason,
+        'wasClean =',
+        event.wasClean
+      );
 
       if (socketRef.current === socket) {
         socketRef.current = null;
+      }
+
+      if (isMountedRef.current) {
+        clearReconnectTimer();
+
+        reconnectTimerRef.current = setTimeout(() => {
+          connectSocket();
+        }, 1500);
       }
     };
   };
 
   useEffect(() => {
-    let isMounted = true;
+    isMountedRef.current = true;
 
     const init = async () => {
       try {
         const profile = await getProfile();
 
-        if (!isMounted) {
+        if (!isMountedRef.current) {
           return;
         }
 
@@ -207,7 +239,9 @@ export default function SOSGlobalOverlay() {
     init();
 
     return () => {
-      isMounted = false;
+      isMountedRef.current = false;
+
+      clearReconnectTimer();
 
       socketRef.current?.close();
       socketRef.current = null;

@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Image,
   Animated,
   PanResponder,
   useWindowDimensions,
@@ -18,7 +17,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Circle } from 'react-native-svg';
-import MapView, { Marker } from 'react-native-maps';
 
 import { fontFamily, fontSize } from '../../utils/fonts';
 import { useLayout } from '../../utils/useLayout';
@@ -47,7 +45,7 @@ const HOLD_DURATION = 3000;
 const CIRCLE_SIZE = 112;
 const STROKE_WIDTH = 7;
 
-
+const ACTIVE_SOS_STATUSES = ['sent', 'received'];
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
@@ -109,6 +107,14 @@ function formatActiveTime(seconds) {
   return `${String(minutes).padStart(2, '0')}:${String(restSeconds).padStart(2, '0')}`;
 }
 
+function isSignalActive(signal) {
+  if (!signal?.status) {
+    return false;
+  }
+
+  return ACTIVE_SOS_STATUSES.includes(signal.status);
+}
+
 export default function SOSScreen({ navigation }) {
   const { screenPadding } = useLayout();
   const { height } = useWindowDimensions();
@@ -130,7 +136,13 @@ export default function SOSScreen({ navigation }) {
   const cancelProgress = useRef(new Animated.Value(0)).current;
 
   const socketRef = useRef(null);
+  const reconnectTimerRef = useRef(null);
+  const isMountedRef = useRef(false);
   const currentUserIdRef = useRef(null);
+
+  const sendingSOSRef = useRef(false);
+  const cancellingSOSRef = useRef(false);
+  const confirmingSOSRef = useRef(false);
 
   const [collapsed, setCollapsed] = useState(false);
   const [isHoldingSOS, setIsHoldingSOS] = useState(false);
@@ -253,6 +265,13 @@ export default function SOSScreen({ navigation }) {
     return () => clearInterval(interval);
   }, [isActiveSOS]);
 
+  const clearReconnectTimer = () => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  };
+
   const resetToNormal = () => {
     setSosState('normal');
     setActiveSignal(null);
@@ -260,19 +279,39 @@ export default function SOSScreen({ navigation }) {
     setConfirmedByNames([]);
     setIncomingSOSVisible(false);
 
+    sendingSOSRef.current = false;
+    cancellingSOSRef.current = false;
+    confirmingSOSRef.current = false;
+
+    setIsHoldingSOS(false);
+    setIsHoldingCancel(false);
+
+    sosProgress.stopAnimation();
+    cancelProgress.stopAnimation();
     sosProgress.setValue(0);
     cancelProgress.setValue(0);
   };
 
   const activateSenderScreen = (signal) => {
+    if (!isSignalActive(signal)) {
+      resetToNormal();
+      return;
+    }
+
     setActiveSignal(signal);
     setConfirmedByNames(signal?.confirmed_by_names || []);
     setIncomingSenderName(signal?.sender_name || 'Пользователь');
     setSosState('senderActive');
     setActiveSeconds(0);
+    setIncomingSOSVisible(false);
   };
 
   const activateReceiverScreen = (signal, showModal = true) => {
+    if (!isSignalActive(signal)) {
+      resetToNormal();
+      return;
+    }
+
     setActiveSignal(signal);
     setConfirmedByNames(signal?.confirmed_by_names || []);
     setIncomingSenderName(signal?.sender_name || 'Пользователь');
@@ -284,17 +323,64 @@ export default function SOSScreen({ navigation }) {
     }
   };
 
-  const connectSOSWebSocket = async () => {
-    const token = await getAccessToken();
+  const handleIncomingSOSEvent = (data) => {
+    const signal = data.signal;
 
-    if (!token) {
+    if (!signal) return;
+
+    if (data.type === 'sos_alert') {
+      if (!isSignalActive(signal)) {
+        return;
+      }
+
+      if (Number(signal.sender) === Number(currentUserIdRef.current)) {
+        activateSenderScreen(signal);
+        return;
+      }
+
+      activateReceiverScreen(signal, true);
       return;
     }
 
-    if (socketRef.current) {
-      socketRef.current.close();
-      socketRef.current = null;
+    if (data.type === 'sos_confirmed') {
+      const isCurrentUserSender =
+        Number(signal.sender) === Number(currentUserIdRef.current);
+
+      setActiveSignal(signal);
+      setConfirmedByNames(signal.confirmed_by_names || []);
+
+      if (isCurrentUserSender) {
+        setSosState('senderActive');
+        return;
+      }
+
+      resetToNormal();
+      return;
     }
+
+    if (data.type === 'sos_cancelled') {
+      resetToNormal();
+    }
+  };
+
+  const connectSOSWebSocket = async () => {
+    const token = await getAccessToken();
+
+    if (!token || !isMountedRef.current) {
+      return;
+    }
+
+    if (
+      socketRef.current &&
+      (
+        socketRef.current.readyState === WebSocket.OPEN ||
+        socketRef.current.readyState === WebSocket.CONNECTING
+      )
+    ) {
+      return;
+    }
+
+    clearReconnectTimer();
 
     const socket = new WebSocket(
       `${WS_BASE_URL}/ws/sos/?token=${encodeURIComponent(token)}`
@@ -309,53 +395,37 @@ export default function SOSScreen({ navigation }) {
     socket.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-
-        if (data.type === 'sos_alert') {
-          const signal = data.signal;
-
-          if (!signal) return;
-
-          if (Number(signal.sender) === Number(currentUserIdRef.current)) {
-            activateSenderScreen(signal);
-            return;
-          }
-
-          activateReceiverScreen(signal, true);
-          return;
-        }
-
-        if (data.type === 'sos_confirmed') {
-          const signal = data.signal;
-
-          if (!signal) return;
-
-          setActiveSignal(signal);
-          setConfirmedByNames(signal.confirmed_by_names || []);
-
-          if (Number(signal.sender) === Number(currentUserIdRef.current)) {
-            setSosState('senderActive');
-          }
-
-          return;
-        }
-
-        if (data.type === 'sos_cancelled') {
-          resetToNormal();
-        }
+        handleIncomingSOSEvent(data);
       } catch (error) {
         console.log('Ошибка обработки SOS события:', error);
       }
     };
 
     socket.onerror = (error) => {
-      console.log('SOS WebSocket ошибка:', error);
+      console.log('SOS WebSocket ошибка:', error?.message || error);
     };
 
-    socket.onclose = () => {
-      console.log('SOS WebSocket закрыт');
+    socket.onclose = (event) => {
+      console.log(
+        'SOS WebSocket закрыт:',
+        'code =',
+        event.code,
+        'reason =',
+        event.reason,
+        'wasClean =',
+        event.wasClean
+      );
 
       if (socketRef.current === socket) {
         socketRef.current = null;
+      }
+
+      if (isMountedRef.current) {
+        clearReconnectTimer();
+
+        reconnectTimerRef.current = setTimeout(() => {
+          connectSOSWebSocket();
+        }, 1500);
       }
     };
   };
@@ -364,6 +434,10 @@ export default function SOSScreen({ navigation }) {
     try {
       const location = await getCurrentLocation();
 
+      if (!isMountedRef.current) {
+        return location;
+      }
+
       setCurrentLocation(location);
       setIsLocationDetected(true);
 
@@ -371,33 +445,50 @@ export default function SOSScreen({ navigation }) {
     } catch (error) {
       console.log('Местоположение не определено:', error);
 
-      setCurrentLocation(null);
-      setIsLocationDetected(false);
+      if (isMountedRef.current) {
+        setCurrentLocation(null);
+        setIsLocationDetected(false);
+      }
 
       return null;
     }
   };
 
   useEffect(() => {
+    isMountedRef.current = true;
+
     const initSOS = async () => {
       try {
         const profile = await getProfile();
+
+        if (!isMountedRef.current) {
+          return;
+        }
+
         currentUserIdRef.current = profile.id;
 
         await connectSOSWebSocket();
 
         const signal = await getActiveSOS();
 
-        if (signal) {
+        if (!isMountedRef.current) {
+          return;
+        }
+
+        if (signal && isSignalActive(signal)) {
           if (Number(signal.sender) === Number(profile.id)) {
             activateSenderScreen(signal);
           } else {
             activateReceiverScreen(signal, false);
           }
+        } else {
+          resetToNormal();
         }
       } catch (error) {
         if (error.response?.status !== 404) {
           console.log('Ошибка проверки активного SOS:', error.response?.data || error);
+        } else {
+          resetToNormal();
         }
       }
     };
@@ -406,12 +497,22 @@ export default function SOSScreen({ navigation }) {
     detectCurrentLocation();
 
     return () => {
+      isMountedRef.current = false;
+
+      clearReconnectTimer();
+
       socketRef.current?.close();
       socketRef.current = null;
     };
   }, []);
 
   const sendSOSRequest = async () => {
+    if (sendingSOSRef.current || isActiveSOS) {
+      return;
+    }
+
+    sendingSOSRef.current = true;
+
     try {
       const location = await detectCurrentLocation();
 
@@ -426,36 +527,69 @@ export default function SOSScreen({ navigation }) {
       activateSenderScreen(signal);
     } catch (error) {
       console.log('Ошибка отправки SOS:', error.response?.data || error);
+
+      Alert.alert(
+        'SOS',
+        error.response?.data?.error ||
+          error.response?.data?.detail ||
+          'Не удалось отправить SOS-сигнал'
+      );
+    } finally {
+      sendingSOSRef.current = false;
     }
   };
 
   const cancelSOSRequest = async () => {
-    if (!activeSignal?.id) return;
+    if (!activeSignal?.id || cancellingSOSRef.current) return;
+
+    cancellingSOSRef.current = true;
 
     try {
       await cancelSOS(activeSignal.id);
       resetToNormal();
     } catch (error) {
       console.log('Ошибка отмены SOS:', error.response?.data || error);
+
+      Alert.alert(
+        'SOS',
+        error.response?.data?.error ||
+          error.response?.data?.detail ||
+          'Не удалось отменить SOS-сигнал'
+      );
+    } finally {
+      cancellingSOSRef.current = false;
     }
   };
 
   const confirmSOSRequest = async () => {
-    if (!activeSignal?.id) return;
+    if (!activeSignal?.id || confirmingSOSRef.current) return;
+
+    confirmingSOSRef.current = true;
 
     try {
       const signal = await confirmSOS(activeSignal.id);
 
       setActiveSignal(signal);
       setConfirmedByNames(signal.confirmed_by_names || []);
-      setSosState('receiverActive');
+      setIncomingSOSVisible(false);
+
+      resetToNormal();
     } catch (error) {
       console.log('Ошибка подтверждения SOS:', error.response?.data || error);
+
+      Alert.alert(
+        'SOS',
+        error.response?.data?.error ||
+          error.response?.data?.detail ||
+          'Не удалось подтвердить SOS-сигнал'
+      );
+    } finally {
+      confirmingSOSRef.current = false;
     }
   };
 
   const startSOSHold = () => {
-    if (isActiveSOS) return;
+    if (isActiveSOS || sendingSOSRef.current) return;
 
     setIsHoldingSOS(true);
 
@@ -487,7 +621,7 @@ export default function SOSScreen({ navigation }) {
   };
 
   const startCancelHold = () => {
-    if (!isSenderActive) return;
+    if (!isSenderActive || cancellingSOSRef.current) return;
 
     setIsHoldingCancel(true);
 
@@ -520,14 +654,20 @@ export default function SOSScreen({ navigation }) {
 
   const openIncomingSOS = () => {
     setIncomingSOSVisible(false);
-    setSosState('receiverActive');
+
+    if (activeSignal && isSignalActive(activeSignal)) {
+      setSosState('receiverActive');
+    }
 
     navigation.navigate('SOS');
   };
 
   const closeIncomingSOS = () => {
     setIncomingSOSVisible(false);
-    setSosState('receiverActive');
+
+    if (activeSignal && isSignalActive(activeSignal)) {
+      setSosState('receiverActive');
+    }
   };
 
   const animateTo = (toValue) => {

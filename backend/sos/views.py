@@ -1,3 +1,7 @@
+from datetime import date, datetime
+from decimal import Decimal
+from uuid import UUID
+
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -13,6 +17,9 @@ from .serializers import SOSSignalSerializer
 from notifications.services import create_family_notification
 
 
+ACTIVE_SOS_STATUSES = ['sent', 'received']
+
+
 def get_user_family(user):
     """
     Возвращает семью пользователя.
@@ -26,9 +33,49 @@ def get_user_family(user):
 
 def get_user_display_name(user):
     """
-    Возвращает красивое имя пользователя.
+    Возвращает имя пользователя для отображения.
     """
     return f'{user.first_name} {user.last_name}'.strip() or user.username
+
+
+def make_json_safe(value):
+    """
+    Приводит данные к виду, который безопасно отправлять через Channels Redis.
+    Redis serializer не умеет напрямую работать с datetime, Decimal, UUID.
+    """
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+
+    if isinstance(value, Decimal):
+        return float(value)
+
+    if isinstance(value, UUID):
+        return str(value)
+
+    if isinstance(value, dict):
+        return {
+            str(key): make_json_safe(item)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, list):
+        return [
+            make_json_safe(item)
+            for item in value
+        ]
+
+    if isinstance(value, tuple):
+        return [
+            make_json_safe(item)
+            for item in value
+        ]
+
+    return value
+
+
+def serialize_sos_signal(signal):
+    serializer = SOSSignalSerializer(signal)
+    return make_json_safe(serializer.data)
 
 
 def send_sos_websocket_event(family_id, event_type, signal_data, extra_data=None):
@@ -42,15 +89,15 @@ def send_sos_websocket_event(family_id, event_type, signal_data, extra_data=None
 
     data = {
         'type': event_type,
-        'signal': signal_data,
+        'signal': make_json_safe(signal_data),
     }
 
     if extra_data:
-        data.update(extra_data)
+        data.update(make_json_safe(extra_data))
 
     async_to_sync(channel_layer.group_send)(
         f'family_sos_{family_id}',
-        data
+        make_json_safe(data)
     )
 
 
@@ -100,14 +147,13 @@ class SendSOSView(APIView):
 
         existing_signal = SOSSignal.objects.filter(
             family=family,
-            sender=request.user
-        ).exclude(
-            status='cancelled'
+            sender=request.user,
+            status__in=ACTIVE_SOS_STATUSES
         ).order_by('-created_at').first()
 
         if existing_signal:
-            serializer = SOSSignalSerializer(existing_signal)
-            return Response(serializer.data, status=status.HTTP_200_OK)
+            signal_data = serialize_sos_signal(existing_signal)
+            return Response(signal_data, status=status.HTTP_200_OK)
 
         signal = SOSSignal.objects.create(
             sender=request.user,
@@ -126,9 +172,7 @@ class SendSOSView(APIView):
             created_by=request.user,
         )
 
-
-        serializer = SOSSignalSerializer(signal)
-        signal_data = serializer.data
+        signal_data = serialize_sos_signal(signal)
 
         send_sos_websocket_event(
             family_id=family.id,
@@ -160,9 +204,8 @@ class ActiveSOSView(APIView):
             )
 
         signal = SOSSignal.objects.filter(
-            family=family
-        ).exclude(
-            status='cancelled'
+            family=family,
+            status__in=ACTIVE_SOS_STATUSES
         ).order_by('-created_at').first()
 
         if not signal:
@@ -171,8 +214,8 @@ class ActiveSOSView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        serializer = SOSSignalSerializer(signal)
-        return Response(serializer.data)
+        signal_data = serialize_sos_signal(signal)
+        return Response(signal_data)
 
 
 class ConfirmSOSView(APIView):
@@ -208,8 +251,7 @@ class ConfirmSOSView(APIView):
         signal.status = 'confirmed'
         signal.save()
 
-        serializer = SOSSignalSerializer(signal)
-        signal_data = serializer.data
+        signal_data = serialize_sos_signal(signal)
 
         confirmed_by_data = {
             'id': request.user.id,
@@ -261,8 +303,7 @@ class CancelSOSView(APIView):
         signal.cancelled_at = timezone.now()
         signal.save()
 
-        serializer = SOSSignalSerializer(signal)
-        signal_data = serializer.data
+        signal_data = serialize_sos_signal(signal)
 
         cancelled_by_data = {
             'id': request.user.id,
@@ -306,4 +347,4 @@ class SOSHistoryView(APIView):
         ).order_by('-created_at')
 
         serializer = SOSSignalSerializer(signals, many=True)
-        return Response(serializer.data)
+        return Response(make_json_safe(serializer.data))

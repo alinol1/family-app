@@ -1,7 +1,41 @@
 import json
+from datetime import date, datetime
+from decimal import Decimal
+from uuid import UUID
 
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
+
+
+def make_json_safe(value):
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+
+    if isinstance(value, Decimal):
+        return float(value)
+
+    if isinstance(value, UUID):
+        return str(value)
+
+    if isinstance(value, dict):
+        return {
+            str(key): make_json_safe(item)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, list):
+        return [
+            make_json_safe(item)
+            for item in value
+        ]
+
+    if isinstance(value, tuple):
+        return [
+            make_json_safe(item)
+            for item in value
+        ]
+
+    return value
 
 
 class SOSConsumer(AsyncWebsocketConsumer):
@@ -40,7 +74,7 @@ class SOSConsumer(AsyncWebsocketConsumer):
             )
 
     async def sos_alert(self, event):
-        signal = event.get('signal')
+        signal = make_json_safe(event.get('signal'))
 
         if not signal:
             return
@@ -51,7 +85,7 @@ class SOSConsumer(AsyncWebsocketConsumer):
         }))
 
     async def sos_confirmed(self, event):
-        signal = event.get('signal')
+        signal = make_json_safe(event.get('signal'))
 
         if not signal:
             return
@@ -59,11 +93,11 @@ class SOSConsumer(AsyncWebsocketConsumer):
         await self.send(text_data=json.dumps({
             'type': 'sos_confirmed',
             'signal': signal,
-            'confirmed_by': event.get('confirmed_by'),
+            'confirmed_by': make_json_safe(event.get('confirmed_by')),
         }))
 
     async def sos_cancelled(self, event):
-        signal = event.get('signal')
+        signal = make_json_safe(event.get('signal'))
 
         if not signal:
             return
@@ -71,7 +105,7 @@ class SOSConsumer(AsyncWebsocketConsumer):
         await self.send(text_data=json.dumps({
             'type': 'sos_cancelled',
             'signal': signal,
-            'cancelled_by': event.get('cancelled_by'),
+            'cancelled_by': make_json_safe(event.get('cancelled_by')),
         }))
 
     @database_sync_to_async

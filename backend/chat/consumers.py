@@ -1,5 +1,7 @@
 import json
 from datetime import date, datetime
+from decimal import Decimal
+from uuid import UUID
 
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
@@ -19,13 +21,25 @@ def make_json_safe(value):
     if isinstance(value, (datetime, date)):
         return value.isoformat()
 
+    if isinstance(value, Decimal):
+        return float(value)
+
+    if isinstance(value, UUID):
+        return str(value)
+
     if isinstance(value, dict):
         return {
-            key: make_json_safe(item)
+            str(key): make_json_safe(item)
             for key, item in value.items()
         }
 
     if isinstance(value, list):
+        return [
+            make_json_safe(item)
+            for item in value
+        ]
+
+    if isinstance(value, tuple):
         return [
             make_json_safe(item)
             for item in value
@@ -87,11 +101,13 @@ class ChatConsumer(AsyncWebsocketConsumer):
             await self.close()
             return
 
+        safe_message_data = make_json_safe(message_data)
+
         await self.channel_layer.group_send(
             self.room_group_name,
             {
                 'type': 'chat_message',
-                'message': message_data,
+                'message': safe_message_data,
             }
         )
 
@@ -102,14 +118,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 f'user_chats_{update["user_id"]}',
                 {
                     'type': 'chat_list_update',
-                    'chat': update['chat'],
+                    'chat': make_json_safe(update['chat']),
                 }
             )
 
     async def chat_message(self, event):
         await self.send(text_data=json.dumps({
             'type': 'message',
-            'message': event['message'],
+            'message': make_json_safe(event['message']),
         }))
 
     @database_sync_to_async
@@ -194,7 +210,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'chat': make_json_safe(serializer.data),
             })
 
-        return updates
+        return make_json_safe(updates)
 
 
 class ChatListConsumer(AsyncWebsocketConsumer):
@@ -230,7 +246,7 @@ class ChatListConsumer(AsyncWebsocketConsumer):
     async def chat_list_update(self, event):
         await self.send(text_data=json.dumps({
             'type': 'chat_update',
-            'chat': event['chat'],
+            'chat': make_json_safe(event['chat']),
         }))
 
     @database_sync_to_async

@@ -1,4 +1,5 @@
 from django.db import models
+
 from users.models import User
 from families.models import Family
 
@@ -9,15 +10,23 @@ class SOSSignal(models.Model):
     Отправляется при нажатии кнопки SOS.
     """
 
-    # Статусы сигнала
-    STATUS_CHOICES = [
-        ('sent', 'Отправлен'),
-        ('received', 'Получен'),
-        ('confirmed', 'Подтверждён'),
-        ('cancelled', 'Отменён'),
+    STATUS_SENT = 'sent'
+    STATUS_RECEIVED = 'received'
+    STATUS_CONFIRMED = 'confirmed'
+    STATUS_CANCELLED = 'cancelled'
+
+    ACTIVE_STATUSES = [
+        STATUS_SENT,
+        STATUS_RECEIVED,
     ]
 
-    # Кто отправил сигнал
+    STATUS_CHOICES = [
+        (STATUS_SENT, 'Отправлен'),
+        (STATUS_RECEIVED, 'Получен'),
+        (STATUS_CONFIRMED, 'Подтверждён'),
+        (STATUS_CANCELLED, 'Отменён'),
+    ]
+
     sender = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
@@ -25,7 +34,6 @@ class SOSSignal(models.Model):
         verbose_name='Отправитель'
     )
 
-    # Семья
     family = models.ForeignKey(
         Family,
         on_delete=models.CASCADE,
@@ -33,7 +41,6 @@ class SOSSignal(models.Model):
         verbose_name='Семья'
     )
 
-    # Широта (геолокация)
     latitude = models.DecimalField(
         max_digits=9,
         decimal_places=6,
@@ -42,7 +49,6 @@ class SOSSignal(models.Model):
         verbose_name='Широта'
     )
 
-    # Долгота (геолокация)
     longitude = models.DecimalField(
         max_digits=9,
         decimal_places=6,
@@ -51,7 +57,6 @@ class SOSSignal(models.Model):
         verbose_name='Долгота'
     )
 
-    # Адрес текстом
     address = models.CharField(
         max_length=255,
         blank=True,
@@ -59,15 +64,13 @@ class SOSSignal(models.Model):
         verbose_name='Адрес'
     )
 
-    # Статус сигнала
     status = models.CharField(
         max_length=10,
         choices=STATUS_CHOICES,
-        default='sent',
+        default=STATUS_SENT,
         verbose_name='Статус'
     )
 
-    # Кто подтвердил получение
     confirmed_by = models.ManyToManyField(
         User,
         blank=True,
@@ -75,13 +78,11 @@ class SOSSignal(models.Model):
         verbose_name='Подтвердили получение'
     )
 
-    # Дата и время отправки
     created_at = models.DateTimeField(
         auto_now_add=True,
         verbose_name='Время отправки'
     )
 
-    # Дата и время отмены
     cancelled_at = models.DateTimeField(
         blank=True,
         null=True,
@@ -94,12 +95,14 @@ class SOSSignal(models.Model):
         ordering = ['-created_at']
 
     def __str__(self):
-        return f'SOS от {self.sender.first_name} — {self.created_at.strftime("%d.%m.%Y %H:%M")}'
+        sender_name = f'{self.sender.first_name} {self.sender.last_name}'.strip()
+        sender_name = sender_name or self.sender.username
+        return f'SOS от {sender_name} — {self.created_at.strftime("%d.%m.%Y %H:%M")}'
 
     @property
     def is_active(self):
         """
         Активен ли сигнал прямо сейчас.
-        Сигнал активен пока не отменён и не подтверждён всеми.
+        Подтверждённый или отменённый сигнал больше не считается активной тревогой.
         """
-        return self.status not in ['cancelled']
+        return self.status in self.ACTIVE_STATUSES
