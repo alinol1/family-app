@@ -169,6 +169,12 @@ class ParentChildRelation(models.Model):
             if self.parent.family_id != self.child.family_id:
                 raise ValidationError('Родитель и ребёнок должны быть из одной семьи.')
 
+            if ParentChildRelation.objects.filter(
+                parent=self.child,
+                child=self.parent
+            ).exclude(pk=self.pk).exists():
+                raise ValidationError('Нельзя создать циклическую связь родитель-ребёнок.')
+
     def save(self, *args, **kwargs):
         self.family = self.parent.family
         self.full_clean()
@@ -263,6 +269,67 @@ class Partnership(models.Model):
 
     def __str__(self):
         return f'{self.partner1} ↔ {self.partner2}'
+
+
+class SiblingRelation(models.Model):
+    family = models.ForeignKey(
+        Family,
+        on_delete=models.CASCADE,
+        related_name='sibling_relations',
+        verbose_name='Семья'
+    )
+
+    person1 = models.ForeignKey(
+        FamilyTreePerson,
+        on_delete=models.CASCADE,
+        related_name='sibling_relations_as_first',
+        verbose_name='Человек 1'
+    )
+
+    person2 = models.ForeignKey(
+        FamilyTreePerson,
+        on_delete=models.CASCADE,
+        related_name='sibling_relations_as_second',
+        verbose_name='Человек 2'
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name='Дата создания'
+    )
+
+    class Meta:
+        verbose_name = 'Связь брат/сестра'
+        verbose_name_plural = 'Связи брат/сестра'
+
+    def clean(self):
+        if self.person1_id and self.person2_id and self.person1_id == self.person2_id:
+            raise ValidationError('Человек не может быть братом/сестрой самому себе.')
+
+        if self.person1_id and self.person2_id:
+            if self.person1.family_id != self.person2.family_id:
+                raise ValidationError('Люди должны быть из одной семьи.')
+
+            duplicate = SiblingRelation.objects.filter(
+                family=self.person1.family
+            ).filter(
+                models.Q(person1=self.person1, person2=self.person2) |
+                models.Q(person1=self.person2, person2=self.person1)
+            )
+
+            if self.pk:
+                duplicate = duplicate.exclude(pk=self.pk)
+
+            if duplicate.exists():
+                raise ValidationError('Такая связь брат/сестра уже существует.')
+
+    def save(self, *args, **kwargs):
+        self.family = self.person1.family
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f'{self.person1} ↔ {self.person2}'
 
 
 class FamilyTreePersonalLabel(models.Model):

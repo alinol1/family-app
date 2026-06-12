@@ -1,4 +1,5 @@
-from django.db import transaction
+from django.core.exceptions import ValidationError
+from django.db import transaction, IntegrityError
 from rest_framework import status
 from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated
@@ -11,12 +12,14 @@ from .models import (
     FamilyTreePerson,
     ParentChildRelation,
     Partnership,
+    SiblingRelation,
     FamilyTreePersonalLabel,
 )
 from .serializers import (
     FamilyTreePersonSerializer,
     ParentChildRelationSerializer,
     PartnershipSerializer,
+    SiblingRelationSerializer,
     FamilyMemberAccountSerializer,
     FamilyTreePersonCreateSerializer,
     AddRelativeSerializer,
@@ -140,6 +143,7 @@ def serialize_tree(family, request):
 
     parent_child_relations = ParentChildRelation.objects.filter(family=family)
     partnerships = Partnership.objects.filter(family=family)
+    sibling_relations = SiblingRelation.objects.filter(family=family)
     family_members = FamilyMember.objects.filter(family=family).select_related('user')
 
     linked_user_ids = set(
@@ -161,12 +165,92 @@ def serialize_tree(family, request):
             partnerships,
             many=True
         ).data,
+        'sibling_relations': SiblingRelationSerializer(
+            sibling_relations,
+            many=True
+        ).data,
         'family_members': FamilyMemberAccountSerializer(
             family_members,
             many=True
         ).data,
         'linked_user_ids': list(linked_user_ids),
     }
+
+
+def relation_error_response(error):
+    if isinstance(error, ValidationError):
+        if hasattr(error, 'messages') and error.messages:
+            return Response(
+                {'error': error.messages[0]},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        return Response(
+            {'error': str(error)},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    return Response(
+        {'error': 'Не удалось создать связь'},
+        status=status.HTTP_400_BAD_REQUEST
+    )
+
+
+def create_parent_child_relation(family, parent, child, relation_type='biological'):
+    if parent.id == child.id:
+        raise ValidationError('Человек не может быть родителем самому себе.')
+
+    if parent.family_id != family.id or child.family_id != family.id:
+        raise ValidationError('Люди должны быть из одной семьи.')
+
+    if ParentChildRelation.objects.filter(
+        family=family,
+        parent=child,
+        child=parent
+    ).exists():
+        raise ValidationError('Нельзя создать циклическую связь родитель-ребёнок.')
+
+    relation, _ = ParentChildRelation.objects.get_or_create(
+        family=family,
+        parent=parent,
+        child=child,
+        defaults={'relation_type': relation_type}
+    )
+
+    return relation
+
+
+def create_partnership_relation(family, partner1, partner2):
+    if partner1.id == partner2.id:
+        raise ValidationError('Человек не может быть партнёром самому себе.')
+
+    if partner1.family_id != family.id or partner2.family_id != family.id:
+        raise ValidationError('Люди должны быть из одной семьи.')
+
+    partnership = Partnership.objects.create(
+        family=family,
+        partner1=partner1,
+        partner2=partner2,
+        status='relationship'
+    )
+
+    return partnership
+
+
+def create_sibling_relation(family, person1, person2):
+    if person1.id == person2.id:
+        raise ValidationError('Человек не может быть братом/сестрой самому себе.')
+
+    if person1.family_id != family.id or person2.family_id != family.id:
+        raise ValidationError('Люди должны быть из одной семьи.')
+
+    sibling_relation = SiblingRelation.objects.create(
+        family=family,
+        person1=person1,
+        person2=person2
+    )
+
+    return sibling_relation
 
 
 class FamilyTreeView(APIView):
@@ -208,6 +292,7 @@ class FamilyTreePersonCreateView(APIView):
         )
 
         if error:
+            transaction.set_rollback(True)
             return error
 
         return Response(
@@ -305,7 +390,7 @@ class FamilyTreePersonDetailView(APIView):
         person.delete()
 
         return Response(
-            {'message': 'Человек удалён из семейного древа'},
+            serialize_tree(family, request),
             status=status.HTTP_200_OK
         )
 
@@ -423,93 +508,101 @@ class FamilyTreeAddRelativeView(APIView):
         )
 
         if error:
+            transaction.set_rollback(True)
             return error
 
-        if relation_type in ['mother', 'father', 'parent']:
-            existing_parents = ParentChildRelation.objects.filter(
-                family=family,
-                child=target_person
-            ).select_related('parent')
+        try:
+            if relation_type in ['mother', 'father', 'parent']:
+                existing_parents = ParentChildRelation.objects.filter(
+                    family=family,
+                    child=target_person
+                ).select_related('parent')
 
-            if relation_type == 'mother':
-                if existing_parents.filter(parent__gender='female').exists():
-                    return Response(
-                        {'error': 'У этого человека уже указана мама'},
-                        status=status.HTTP_400_BAD_REQUEST
+                if relation_type == 'mother':
+                    if existing_parents.filter(parent__gender='female').exists():
+                        transaction.set_rollback(True)
+                        return Response(
+                            {'error': 'У этого человека уже указана мама'},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+
+                if relation_type == 'father':
+                    if existing_parents.filter(parent__gender='male').exists():
+                        transaction.set_rollback(True)
+                        return Response(
+                            {'error': 'У этого человека уже указан папа'},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+
+                create_parent_child_relation(
+                    family=family,
+                    parent=new_person,
+                    child=target_person,
+                    relation_type='guardian' if relation_type == 'parent' else 'biological'
+                )
+
+            elif relation_type == 'child':
+                create_parent_child_relation(
+                    family=family,
+                    parent=target_person,
+                    child=new_person,
+                    relation_type='biological'
+                )
+
+                target_partner_relation = Partnership.objects.filter(
+                    family=family,
+                ).filter(
+                    partner1=target_person
+                ).first() or Partnership.objects.filter(
+                    family=family,
+                    partner2=target_person
+                ).first()
+
+                if target_partner_relation:
+                    second_parent = (
+                        target_partner_relation.partner2
+                        if target_partner_relation.partner1_id == target_person.id
+                        else target_partner_relation.partner1
                     )
 
-            if relation_type == 'father':
-                if existing_parents.filter(parent__gender='male').exists():
-                    return Response(
-                        {'error': 'У этого человека уже указан папа'},
-                        status=status.HTTP_400_BAD_REQUEST
+                    create_parent_child_relation(
+                        family=family,
+                        parent=second_parent,
+                        child=new_person,
+                        relation_type='biological'
                     )
 
-            ParentChildRelation.objects.create(
-                family=family,
-                parent=new_person,
-                child=target_person,
-                relation_type='guardian' if relation_type == 'parent' else 'biological'
-            )
-
-        elif relation_type == 'child':
-            ParentChildRelation.objects.create(
-                family=family,
-                parent=target_person,
-                child=new_person,
-                relation_type='biological'
-            )
-
-            target_partner_relation = Partnership.objects.filter(
-                family=family,
-            ).filter(
-                partner1=target_person
-            ).first() or Partnership.objects.filter(
-                family=family,
-                partner2=target_person
-            ).first()
-
-            if target_partner_relation:
-                second_parent = (
-                    target_partner_relation.partner2
-                    if target_partner_relation.partner1_id == target_person.id
-                    else target_partner_relation.partner1
-                )
-
-                ParentChildRelation.objects.get_or_create(
+            elif relation_type == 'partner':
+                create_partnership_relation(
                     family=family,
-                    parent=second_parent,
-                    child=new_person,
-                    defaults={'relation_type': 'biological'}
+                    partner1=target_person,
+                    partner2=new_person
                 )
 
-        elif relation_type == 'partner':
-            Partnership.objects.create(
-                family=family,
-                partner1=target_person,
-                partner2=new_person,
-                status='relationship'
-            )
-
-        elif relation_type == 'sibling':
-            parent_relations = ParentChildRelation.objects.filter(
-                family=family,
-                child=target_person
-            )
-
-            if not parent_relations.exists():
-                return Response(
-                    {'error': 'Сначала добавьте выбранному человеку хотя бы одного родителя'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            for parent_relation in parent_relations:
-                ParentChildRelation.objects.create(
+            elif relation_type == 'sibling':
+                parent_relations = ParentChildRelation.objects.filter(
                     family=family,
-                    parent=parent_relation.parent,
-                    child=new_person,
-                    relation_type=parent_relation.relation_type
+                    child=target_person
                 )
+
+                if parent_relations.exists():
+                    for parent_relation in parent_relations:
+                        create_parent_child_relation(
+                            family=family,
+                            parent=parent_relation.parent,
+                            child=new_person,
+                            relation_type=parent_relation.relation_type
+                        )
+
+                create_sibling_relation(
+                    family=family,
+                    person1=target_person,
+                    person2=new_person
+                )
+
+        except (ValidationError, IntegrityError) as error:
+            transaction.set_rollback(True)
+            return relation_error_response(error)
 
         return Response(
             serialize_tree(family, request),

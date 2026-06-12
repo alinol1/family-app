@@ -1,11 +1,11 @@
 from rest_framework import serializers
 
 from families.models import FamilyMember
-from users.models import User
 from .models import (
     FamilyTreePerson,
     ParentChildRelation,
     Partnership,
+    SiblingRelation,
     FamilyTreePersonalLabel,
 )
 
@@ -97,6 +97,20 @@ class PartnershipSerializer(serializers.ModelSerializer):
             'status',
             'start_date',
             'end_date',
+            'created_at',
+        ]
+
+
+class SiblingRelationSerializer(serializers.ModelSerializer):
+    person1_id = serializers.IntegerField(source='person1.id', read_only=True)
+    person2_id = serializers.IntegerField(source='person2.id', read_only=True)
+
+    class Meta:
+        model = SiblingRelation
+        fields = [
+            'id',
+            'person1_id',
+            'person2_id',
             'created_at',
         ]
 
