@@ -11,13 +11,13 @@ import {
   Modal,
   ActivityIndicator,
   Alert,
+  Image,
 } from 'react-native';
 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Circle } from 'react-native-svg';
-import MapView, { Marker } from 'react-native-maps';
 
 import { fontFamily, fontSize } from '../../utils/fonts';
 import { useLayout } from '../../utils/useLayout';
@@ -36,6 +36,8 @@ import {
   cancelSOS,
 } from '../../api/sos';
 
+const mapPlaceholder = require('../../../assets/images/map.png');
+
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 const BASE_HEIGHT = 812;
@@ -47,7 +49,6 @@ const CIRCLE_SIZE = 112;
 const STROKE_WIDTH = 7;
 
 const ACTIVE_SOS_STATUSES = ['sent', 'received', 'confirmed'];
-const IS_MAP_SUPPORTED = Platform.OS !== 'web';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
@@ -252,20 +253,6 @@ export default function SOSScreen({ navigation }) {
   const hasMapLocation = Boolean(
     mapLocation?.latitude && mapLocation?.longitude
   );
-
-  const mapRegion = hasMapLocation
-    ? {
-        latitude: mapLocation.latitude,
-        longitude: mapLocation.longitude,
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
-      }
-    : {
-        latitude: 55.751244,
-        longitude: 37.618423,
-        latitudeDelta: 0.25,
-        longitudeDelta: 0.25,
-      };
 
   const mapMarkerTitle = isReceiverActive
     ? incomingSenderName
@@ -868,33 +855,23 @@ export default function SOSScreen({ navigation }) {
         </View>
 
         <View style={[styles.mapContainer, { top: m.topBarHeight }]}>
-          {IS_MAP_SUPPORTED ? (
-            <MapView
-              style={styles.map}
-              region={mapRegion}
-              showsUserLocation={!isReceiverActive}
-              showsMyLocationButton={false}
-              showsCompass={false}
-              toolbarEnabled={false}
-            >
-              {hasMapLocation && (
-                <Marker
-                  coordinate={mapLocation}
-                  title={mapMarkerTitle}
-                />
-              )}
-            </MapView>
-          ) : (
-            <View style={styles.map}>
-              <View style={styles.mapFallbackOverlay}>
-                <Ionicons name="location-outline" size={32} color="#858585" />
+          <View style={styles.map}>
+            <Image
+              source={mapPlaceholder}
+              style={styles.mapImage}
+              resizeMode="cover"
+            />
 
-                <Text style={styles.mapFallbackText} allowFontScaling={false}>
-                  Карта временно отключена
-                </Text>
-              </View>
+            <View style={styles.mapFallbackOverlay}>
+              <Ionicons name="location-outline" size={32} color="#858585" />
+
+              <Text style={styles.mapFallbackText} allowFontScaling={false}>
+                {hasMapLocation
+                  ? `${mapMarkerTitle}: ${mapLocation.latitude.toFixed(6)}, ${mapLocation.longitude.toFixed(6)}`
+                  : 'Карта временно отключена'}
+              </Text>
             </View>
-          )}
+          </View>
         </View>
 
         <Animated.View
