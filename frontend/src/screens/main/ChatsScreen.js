@@ -608,13 +608,7 @@ export default function ChatsScreen({ navigation }) {
             Чаты
           </Text>
 
-          <TouchableOpacity
-            style={styles.settingsButton}
-            activeOpacity={0.8}
-            onPress={() => navigation.navigate('Settings')}
-          >
-            <Ionicons name="settings-outline" size={28} color="#7B7B7B" />
-          </TouchableOpacity>
+          <View style={styles.settingsButtonPlaceholder} />
         </View>
 
         <View style={styles.searchContainer}>

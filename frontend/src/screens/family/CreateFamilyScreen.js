@@ -40,7 +40,7 @@ function scaleByHeight(screenHeight, minValue, maxValue) {
 export default function CreateFamilyScreen({ navigation }) {
   const { screenPadding, height } = useLayout();
 
-  const [mode, setMode] = useState('create');
+  const [mode, setMode] = useState('join');
 
   const [familyName, setFamilyName] = useState('');
 
@@ -218,31 +218,6 @@ export default function CreateFamilyScreen({ navigation }) {
                 style={[
                   styles.modeButton,
 
-                  mode === 'create'
-                    ? styles.modeButtonActive
-                    : styles.modeButtonInactive,
-                ]}
-                activeOpacity={0.85}
-                onPress={() => setMode('create')}
-              >
-                <Text
-                  style={[
-                    styles.modeButtonText,
-
-                    mode === 'create'
-                      ? styles.modeButtonTextActive
-                      : styles.modeButtonTextInactive,
-                  ]}
-                  allowFontScaling={false}
-                >
-                  Создать
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.modeButton,
-
                   mode === 'join'
                     ? styles.modeButtonActive
                     : styles.modeButtonInactive,
@@ -261,6 +236,31 @@ export default function CreateFamilyScreen({ navigation }) {
                   allowFontScaling={false}
                 >
                   Присоединиться
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.modeButton,
+
+                  mode === 'create'
+                    ? styles.modeButtonActive
+                    : styles.modeButtonInactive,
+                ]}
+                activeOpacity={0.85}
+                onPress={() => setMode('create')}
+              >
+                <Text
+                  style={[
+                    styles.modeButtonText,
+
+                    mode === 'create'
+                      ? styles.modeButtonTextActive
+                      : styles.modeButtonTextInactive,
+                  ]}
+                  allowFontScaling={false}
+                >
+                  Создать
                 </Text>
               </TouchableOpacity>
             </View>

@@ -328,12 +328,7 @@ export default function ProfileScreen({ navigation }) {
             Профиль
           </Text>
 
-          <TouchableOpacity
-            activeOpacity={0.75}
-            onPress={() => openNotReady('Настройки профиля')}
-          >
-            <Ionicons name="settings-outline" size={24} color="#262626" />
-          </TouchableOpacity>
+          <View style={styles.headerRightPlaceholder} />
         </View>
 
         <ScrollView
@@ -438,35 +433,6 @@ export default function ProfileScreen({ navigation }) {
             })}
           </View>
 
-          {renderSectionHeader('Настройки и безопасность')}
-
-          <View style={styles.card}>
-            {renderInfoRow({
-              icon: 'lock-closed-outline',
-              label: 'Безопасность аккаунта',
-              value: 'Изменить пароль и восстановление доступа',
-              onPress: () => openNotReady('Безопасность аккаунта'),
-            })}
-
-            <View style={styles.divider} />
-
-            {renderInfoRow({
-              icon: 'notifications-outline',
-              label: 'Уведомления',
-              value: 'Настройка уведомлений приложения',
-              onPress: () => openNotReady('Уведомления'),
-            })}
-
-            <View style={styles.divider} />
-
-            {renderInfoRow({
-              icon: 'accessibility-outline',
-              label: 'Режим доступности',
-              value: 'Крупный текст и упрощённый интерфейс',
-              onPress: () => openNotReady('Режим доступности'),
-            })}
-          </View>
-
           <TouchableOpacity
             style={styles.logoutButton}
             activeOpacity={0.8}
@@ -527,6 +493,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginTop: 16,
     marginBottom: 10,
+  },
+
+  headerRightPlaceholder: {
+    width: 24,
+    height: 24,
   },
 
   title: {

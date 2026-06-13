@@ -143,7 +143,7 @@ export function PresenceProvider({ children, enabled = true }) {
     };
 
     socket.onerror = (error) => {
-      console.log('Presence WebSocket ошибка:', error);
+      console.log('Presence WebSocket ошибка:', error?.message || 'соединение закрыто');
     };
 
     socket.onclose = () => {

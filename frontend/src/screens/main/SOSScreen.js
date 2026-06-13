@@ -12,6 +12,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Linking,
 } from 'react-native';
 
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -152,6 +153,9 @@ export default function SOSScreen({ navigation }) {
   const sosProgress = useRef(new Animated.Value(0)).current;
   const cancelProgress = useRef(new Animated.Value(0)).current;
 
+  const cancelPulse = useRef(new Animated.Value(1)).current;
+  const cancelPulseLoopRef = useRef(null);
+
   const socketRef = useRef(null);
   const reconnectTimerRef = useRef(null);
   const isMountedRef = useRef(false);
@@ -258,6 +262,68 @@ export default function SOSScreen({ navigation }) {
     ? incomingSenderName
     : 'Вы здесь';
 
+  const openEmergencyDialer = async () => {
+    try {
+      const phoneUrl = 'tel:112';
+      const supported = await Linking.canOpenURL(phoneUrl);
+
+      if (!supported) {
+        Alert.alert('Ошибка', 'Не удалось открыть набор номера');
+        return;
+      }
+
+      await Linking.openURL(phoneUrl);
+    } catch (error) {
+      console.log('Ошибка открытия набора номера 112:', error);
+      Alert.alert('Ошибка', 'Не удалось открыть набор номера');
+    }
+  };
+
+  const startCancelPulse = () => {
+    if (cancelPulseLoopRef.current) {
+      return;
+    }
+
+    cancelPulseLoopRef.current = Animated.loop(
+      Animated.sequence([
+        Animated.timing(cancelPulse, {
+          toValue: 1.018,
+          duration: 650,
+          useNativeDriver: true,
+        }),
+        Animated.timing(cancelPulse, {
+          toValue: 1,
+          duration: 650,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+
+    cancelPulseLoopRef.current.start();
+  };
+
+  const stopCancelPulse = () => {
+    if (cancelPulseLoopRef.current) {
+      cancelPulseLoopRef.current.stop();
+      cancelPulseLoopRef.current = null;
+    }
+
+    cancelPulse.stopAnimation();
+    cancelPulse.setValue(1);
+  };
+
+  useEffect(() => {
+    if (isSenderActive) {
+      startCancelPulse();
+    } else {
+      stopCancelPulse();
+    }
+
+    return () => {
+      stopCancelPulse();
+    };
+  }, [isSenderActive]);
+
   useEffect(() => {
     if (!isActiveSOS || !activeSignal) return;
 
@@ -292,6 +358,8 @@ export default function SOSScreen({ navigation }) {
 
     setIsHoldingSOS(false);
     setIsHoldingCancel(false);
+
+    stopCancelPulse();
 
     sosProgress.stopAnimation();
     cancelProgress.stopAnimation();
@@ -509,6 +577,7 @@ export default function SOSScreen({ navigation }) {
       isMountedRef.current = false;
 
       clearReconnectTimer();
+      stopCancelPulse();
 
       socketRef.current?.close();
       socketRef.current = null;
@@ -777,6 +846,7 @@ export default function SOSScreen({ navigation }) {
       width={CIRCLE_SIZE}
       height={CIRCLE_SIZE}
       style={styles.progressSvg}
+      pointerEvents="none"
     >
       <Circle
         stroke={trackColor}
@@ -845,13 +915,7 @@ export default function SOSScreen({ navigation }) {
             Безопасность
           </Text>
 
-          <TouchableOpacity
-            style={styles.settingsButton}
-            activeOpacity={0.8}
-            onPress={() => navigation.navigate('Settings')}
-          >
-            <Ionicons name="settings-outline" size={28} color="#7B7B7B" />
-          </TouchableOpacity>
+          <View style={styles.settingsButtonPlaceholder} />
         </View>
 
         <View style={[styles.mapContainer, { top: m.topBarHeight }]}>
@@ -986,6 +1050,7 @@ export default function SOSScreen({ navigation }) {
                 isReceiverActive && styles.callButtonReceiver,
               ]}
               activeOpacity={0.85}
+              onPress={openEmergencyDialer}
             >
               {isReceiverActive ? (
                 <Ionicons name="call" size={27} color="#6A6A6A" />
@@ -1009,25 +1074,35 @@ export default function SOSScreen({ navigation }) {
             >
               {renderProgressSvg(cancelProgress, isHoldingCancel, '#A7E5B8')}
 
-              <TouchableOpacity
+              <Animated.View
                 style={[
-                  styles.cancelButton,
+                  styles.cancelButtonAnimatedWrapper,
                   {
                     height: m.sosHeight,
+                    transform: [{ scale: cancelPulse }],
                   },
                 ]}
-                activeOpacity={0.9}
-                onPressIn={startCancelHold}
-                onPressOut={stopCancelHold}
               >
-                <Text style={styles.cancelButtonText} allowFontScaling={false}>
-                  {isHoldingCancel ? 'Удерживайте...' : 'Отменить сигнал'}
-                </Text>
+                <TouchableOpacity
+                  style={[
+                    styles.cancelButton,
+                    {
+                      height: m.sosHeight,
+                    },
+                  ]}
+                  activeOpacity={0.9}
+                  onPressIn={startCancelHold}
+                  onPressOut={stopCancelHold}
+                >
+                  <Text style={styles.cancelButtonText} allowFontScaling={false}>
+                    {isHoldingCancel ? 'Удерживайте...' : 'Отменить сигнал'}
+                  </Text>
 
-                <Text style={styles.cancelTimerText} allowFontScaling={false}>
-                  Сигнал активен {formatActiveTime(activeSeconds)}
-                </Text>
-              </TouchableOpacity>
+                  <Text style={styles.cancelTimerText} allowFontScaling={false}>
+                    Сигнал активен {formatActiveTime(activeSeconds)}
+                  </Text>
+                </TouchableOpacity>
+              </Animated.View>
             </View>
           ) : isReceiverActive ? (
             <TouchableOpacity
@@ -1124,7 +1199,7 @@ export default function SOSScreen({ navigation }) {
               <TouchableOpacity
                 style={styles.sosModalSecondaryButton}
                 activeOpacity={0.85}
-                onPress={openIncomingSOS}
+                onPress={openEmergencyDialer}
               >
                 <Ionicons name="call" size={20} color="#FA4B4B" />
 
@@ -1261,6 +1336,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#F7F7F7',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+
+  settingsButtonPlaceholder: {
+    width: 60,
+    height: 60,
   },
 
   mapContainer: {
@@ -1444,6 +1524,12 @@ const styles = StyleSheet.create({
   progressSvg: {
     position: 'absolute',
     zIndex: 2,
+    pointerEvents: 'none',
+  },
+
+  cancelButtonAnimatedWrapper: {
+    width: '100%',
+    borderRadius: 28,
   },
 
   sosButton: {
