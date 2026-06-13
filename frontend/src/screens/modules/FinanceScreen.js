@@ -19,6 +19,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
+import Svg, { Circle, G } from 'react-native-svg';
 import { useFocusEffect } from '@react-navigation/native';
 
 import { fontFamily, fontSize } from '../../utils/fonts';
@@ -48,6 +49,17 @@ if (
 }
 
 const MAIN_COLOR = '#9456FE';
+
+const EXPENSE_CHART_COLORS = [
+  '#9456FE',
+  '#EF4444',
+  '#F59E0B',
+  '#20B846',
+  '#3B82F6',
+  '#EC4899',
+  '#14B8A6',
+  '#8B5CF6',
+];
 
 const DEFAULT_STATS = {
   totalIncome: 0,
@@ -138,7 +150,9 @@ const normalizeGoal = (goal) => ({
   title: goal.title,
   description: goal.description || '',
   scope: goal.scope,
-  scopeTitle: goal.scope_display || (goal.scope === 'family' ? 'Общая цель' : 'Личная цель'),
+  scopeTitle:
+    goal.scope_display ||
+    (goal.scope === 'family' ? 'Общая цель' : 'Личная цель'),
   currentAmount: toNumber(goal.current_amount),
   targetAmount: toNumber(goal.target_amount),
   progressPercent: toNumber(goal.progress_percent),
@@ -150,11 +164,13 @@ const normalizeGoal = (goal) => ({
 });
 
 const normalizeStats = (data) => {
-  const periodStats = (data?.period_stats || DEFAULT_STATS.periodStats).map((item) => ({
-    label: item.label,
-    income: toNumber(item.income),
-    expense: toNumber(item.expense),
-  }));
+  const periodStats = (data?.period_stats || DEFAULT_STATS.periodStats).map(
+    (item) => ({
+      label: item.label,
+      income: toNumber(item.income),
+      expense: toNumber(item.expense),
+    })
+  );
 
   const periodMaxValue = Math.max(
     ...periodStats.map((item) => Math.max(item.income, item.expense)),
@@ -194,7 +210,9 @@ const normalizeStats = (data) => {
     goalsCurrentAmount: toNumber(data?.goals_current_amount),
     goalsTargetAmount: toNumber(data?.goals_target_amount),
     goalsProgressPercent: data?.goals_progress_percent || 0,
-    largestExpense: data?.largest_expense ? normalizeRecord(data.largest_expense) : null,
+    largestExpense: data?.largest_expense
+      ? normalizeRecord(data.largest_expense)
+      : null,
   };
 };
 
@@ -250,6 +268,33 @@ export default function FinanceScreen({ navigation }) {
   const personalGoals = goals.filter((goal) => goal.scope === 'personal');
   const familyGoals = goals.filter((goal) => goal.scope === 'family');
 
+  const expenseDiagramItems = useMemo(() => {
+    const items = (stats.expenseCategoryStats || []).filter(
+      (category) => toNumber(category.amount) > 0
+    );
+
+    const totalAmount = items.reduce(
+      (sum, category) => sum + toNumber(category.amount),
+      0
+    );
+
+    const baseTotal = totalAmount || stats.totalExpense || 0;
+
+    return items.map((category, index) => {
+      const amount = toNumber(category.amount);
+      const rawPercent = baseTotal ? (amount / baseTotal) * 100 : 0;
+      const percent = Math.round(rawPercent);
+
+      return {
+        ...category,
+        amount,
+        rawPercent,
+        percent,
+        color: EXPENSE_CHART_COLORS[index % EXPENSE_CHART_COLORS.length],
+      };
+    });
+  }, [stats.expenseCategoryStats, stats.totalExpense]);
+
   const formatNumber = (value, decimals = 0) => {
     const number = Number(value || 0);
     const sign = number < 0 ? '-' : '';
@@ -257,10 +302,7 @@ export default function FinanceScreen({ navigation }) {
     const fixedValue = absoluteNumber.toFixed(decimals);
     const [integerPart, decimalPart] = fixedValue.split('.');
 
-    const groupedInteger = integerPart.replace(
-      /\B(?=(\d{3})+(?!\d))/g,
-      '.'
-    );
+    const groupedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 
     if (decimals > 0) {
       return `${sign}${groupedInteger},${decimalPart}`;
@@ -321,7 +363,10 @@ export default function FinanceScreen({ navigation }) {
         expense: categories.filter((category) => category.type === 'expense'),
       });
     } catch (error) {
-      Alert.alert('Финансы', getErrorMessage(error, 'Не удалось загрузить данные ячейки'));
+      Alert.alert(
+        'Финансы',
+        getErrorMessage(error, 'Не удалось загрузить данные ячейки')
+      );
     }
   }, []);
 
@@ -378,10 +423,7 @@ export default function FinanceScreen({ navigation }) {
       return;
     }
 
-    await Promise.all([
-      reloadSpaces(),
-      loadSelectedSpaceData(selectedSpaceId),
-    ]);
+    await Promise.all([reloadSpaces(), loadSelectedSpaceData(selectedSpaceId)]);
   };
 
   useFocusEffect(
@@ -519,7 +561,10 @@ export default function FinanceScreen({ navigation }) {
       setNewCategoryName('');
       closeCategoryModal();
     } catch (error) {
-      Alert.alert('Категория', getErrorMessage(error, 'Не удалось добавить категорию'));
+      Alert.alert(
+        'Категория',
+        getErrorMessage(error, 'Не удалось добавить категорию')
+      );
     }
   };
 
@@ -1129,7 +1174,13 @@ export default function FinanceScreen({ navigation }) {
     </>
   );
 
-  const renderStatsMetricCard = ({ title, value, subtitle, icon, color }) => (
+  const renderStatsMetricCard = ({
+    title,
+    value,
+    subtitle,
+    icon,
+    color,
+  }) => (
     <View style={styles.statsMetricCard}>
       <View style={styles.statsMetricIcon}>
         <Ionicons name={icon} size={22} color={color} />
@@ -1139,353 +1190,200 @@ export default function FinanceScreen({ navigation }) {
         {title}
       </Text>
 
-      <Text style={styles.statsMetricValue} allowFontScaling={false} numberOfLines={1}>
+      <Text
+        style={styles.statsMetricValue}
+        allowFontScaling={false}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.78}
+      >
         {value}
       </Text>
 
-      <Text style={styles.statsMetricSubtitle} allowFontScaling={false} numberOfLines={1}>
+      <Text
+        style={styles.statsMetricSubtitle}
+        allowFontScaling={false}
+        numberOfLines={1}
+      >
         {subtitle}
       </Text>
     </View>
   );
 
-  const renderInsightCard = () => {
-    let title = 'Финансовая ситуация стабильная';
-    let text =
-      'По текущим операциям бюджет выглядит сбалансированным. Можно продолжать отслеживать расходы по категориям.';
+  const renderExpenseDiagram = () => {
+    const size = 190;
+    const strokeWidth = 24;
+    const radius = (size - strokeWidth) / 2;
+    const center = size / 2;
+    const circumference = 2 * Math.PI * radius;
+    let accumulatedPercent = 0;
 
-    if (stats.totalIncome === 0 && stats.totalExpense === 0) {
-      title = 'Пока нет данных';
-      text =
-        'Добавьте доходы и расходы, чтобы увидеть полноценную аналитику по этой финансовой ячейке.';
-    } else if (stats.netAmount > 0) {
-      title = 'Бюджет в плюсе';
-      text = `Доходы превышают расходы на ${formatCurrency(stats.netAmount)}. Сейчас удаётся сохранить около ${stats.savingPercent}% доходов.`;
-    } else if (stats.netAmount < 0) {
-      title = 'Расходы выше доходов';
-      text = `Расходы превысили доходы на ${formatCurrency(Math.abs(stats.netAmount))}. Стоит проверить самые крупные категории расходов.`;
-    }
-
-    return (
-      <View style={styles.insightCard}>
-        <View style={styles.insightTopRow}>
-          <View style={styles.insightIcon}>
-            <Ionicons name="sparkles-outline" size={22} color={MAIN_COLOR} />
-          </View>
-
-          <Text style={styles.insightTitle} allowFontScaling={false}>
-            {title}
-          </Text>
-        </View>
-
-        <Text style={styles.insightText} allowFontScaling={false}>
-          {text}
-        </Text>
-      </View>
+    const expenseDiagramTotal = expenseDiagramItems.reduce(
+      (sum, item) => sum + item.amount,
+      0
     );
-  };
 
-  const renderCashflowChart = () => {
-    const chartHeight = 132;
+    const hasExpenses = expenseDiagramItems.length > 0 && expenseDiagramTotal > 0;
 
     return (
-      <View style={styles.chartCard}>
-        <View style={styles.chartHeader}>
-          <View style={styles.chartHeaderTextBlock}>
-            <Text style={styles.chartTitle} allowFontScaling={false}>
-              Динамика доходов и расходов
+      <View style={styles.expenseDiagramCard}>
+        <View style={styles.expenseDiagramHeader}>
+          <View>
+            <Text style={styles.expenseDiagramTitle} allowFontScaling={false}>
+              Диаграмма расходов
             </Text>
 
-            <Text style={styles.chartSubtitle} allowFontScaling={false}>
-              Сравнение по неделям текущего периода
+            <Text style={styles.expenseDiagramSubtitle} allowFontScaling={false}>
+              Расходы по категориям
             </Text>
           </View>
 
-          <View style={styles.chartLegend}>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: '#20B846' }]} />
-              <Text style={styles.legendText} allowFontScaling={false}>
-                Доход
-              </Text>
-            </View>
-
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: '#EF4444' }]} />
-              <Text style={styles.legendText} allowFontScaling={false}>
-                Расход
-              </Text>
-            </View>
+          <View style={styles.expenseDiagramIcon}>
+            <Ionicons name="pie-chart-outline" size={22} color={MAIN_COLOR} />
           </View>
         </View>
 
-        <View style={styles.chartBody}>
-          {stats.periodStats.map((period) => {
-            const incomeHeight = period.income
-              ? Math.max((period.income / stats.periodMaxValue) * chartHeight, 8)
-              : 0;
+        {hasExpenses ? (
+          <>
+            <View style={styles.expenseDonutWrapper}>
+              <Svg width={size} height={size}>
+                <Circle
+                  cx={center}
+                  cy={center}
+                  r={radius}
+                  stroke="#EFEFEF"
+                  strokeWidth={strokeWidth}
+                  fill="none"
+                />
 
-            const expenseHeight = period.expense
-              ? Math.max((period.expense / stats.periodMaxValue) * chartHeight, 8)
-              : 0;
+                <G rotation="-90" originX={center} originY={center}>
+                  {expenseDiagramItems.map((item, index) => {
+                    const sliceLength = (item.rawPercent / 100) * circumference;
+                    const dashOffset =
+                      -(accumulatedPercent / 100) * circumference;
 
-            return (
-              <View key={period.label} style={styles.chartColumn}>
-                <View style={styles.chartBars}>
-                  <View
-                    style={[
-                      styles.chartBar,
-                      styles.chartIncomeBar,
-                      {
-                        height: incomeHeight,
-                      },
-                    ]}
-                  />
+                    accumulatedPercent += item.rawPercent;
 
-                  <View
-                    style={[
-                      styles.chartBar,
-                      styles.chartExpenseBar,
-                      {
-                        height: expenseHeight,
-                      },
-                    ]}
-                  />
+                    return (
+                      <Circle
+                        key={`${item.title}-${index}`}
+                        cx={center}
+                        cy={center}
+                        r={radius}
+                        stroke={item.color}
+                        strokeWidth={strokeWidth}
+                        strokeDasharray={`${sliceLength} ${circumference}`}
+                        strokeDashoffset={dashOffset}
+                        strokeLinecap="round"
+                        fill="none"
+                      />
+                    );
+                  })}
+                </G>
+              </Svg>
+
+              <View style={styles.expenseDonutCenter}>
+                <Text
+                  style={styles.expenseDonutValue}
+                  allowFontScaling={false}
+                  numberOfLines={1}
+                >
+                  {formatCurrency(stats.totalExpense || expenseDiagramTotal)}
+                </Text>
+
+                <Text style={styles.expenseDonutLabel} allowFontScaling={false}>
+                  всего
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.expenseCategoriesList}>
+              {expenseDiagramItems.map((item, index) => (
+                <View
+                  key={`${item.title}-${index}`}
+                  style={styles.expenseCategoryRow}
+                >
+                  <View style={styles.expenseCategoryLeft}>
+                    <View
+                      style={[
+                        styles.expenseCategoryColor,
+                        { backgroundColor: item.color },
+                      ]}
+                    />
+
+                    <View style={styles.expenseCategoryNameBlock}>
+                      <Text
+                        style={styles.expenseCategoryName}
+                        allowFontScaling={false}
+                        numberOfLines={1}
+                      >
+                        {item.title}
+                      </Text>
+
+                      <Text
+                        style={styles.expenseCategoryPercent}
+                        allowFontScaling={false}
+                      >
+                        {item.percent}% от расходов
+                      </Text>
+                    </View>
+                  </View>
+
+                  <Text
+                    style={styles.expenseCategoryAmount}
+                    allowFontScaling={false}
+                    numberOfLines={1}
+                  >
+                    {formatCurrency(item.amount)}
+                  </Text>
                 </View>
+              ))}
+            </View>
+          </>
+        ) : (
+          <View style={styles.expenseEmptyBox}>
+            <View style={styles.expenseEmptyIcon}>
+              <Ionicons name="receipt-outline" size={24} color={MAIN_COLOR} />
+            </View>
 
-                <Text style={styles.chartLabel} allowFontScaling={false}>
-                  {period.label}
-                </Text>
-              </View>
-            );
-          })}
-        </View>
+            <Text style={styles.expenseEmptyTitle} allowFontScaling={false}>
+              Расходов пока нет
+            </Text>
+
+            <Text style={styles.expenseEmptyText} allowFontScaling={false}>
+              Добавьте расходы, и здесь появится диаграмма по категориям.
+            </Text>
+          </View>
+        )}
       </View>
     );
   };
-
-  const renderStatsProgress = ({ title, percent, leftText, rightText, color }) => (
-    <View style={styles.statsProgressCard}>
-      <View style={styles.statsProgressHeader}>
-        <Text style={styles.statsProgressTitle} allowFontScaling={false}>
-          {title}
-        </Text>
-
-        <Text style={styles.statsProgressPercent} allowFontScaling={false}>
-          {percent}%
-        </Text>
-      </View>
-
-      <View style={styles.statsProgressTrack}>
-        <View
-          style={[
-            styles.statsProgressFill,
-            {
-              width: `${percent}%`,
-              backgroundColor: color,
-            },
-          ]}
-        />
-      </View>
-
-      <View style={styles.statsProgressFooter}>
-        <Text style={styles.statsProgressFooterText} allowFontScaling={false}>
-          {leftText}
-        </Text>
-
-        <Text style={styles.statsProgressFooterText} allowFontScaling={false}>
-          {rightText}
-        </Text>
-      </View>
-    </View>
-  );
-
-  const renderCategoryStats = ({ title, items, emptyText, color }) => (
-    <View style={styles.statsBlockCard}>
-      <Text style={styles.statsBlockTitle} allowFontScaling={false}>
-        {title}
-      </Text>
-
-      {items.length === 0 ? (
-        <Text style={styles.statsEmptyText} allowFontScaling={false}>
-          {emptyText}
-        </Text>
-      ) : (
-        items.map((category) => (
-          <View key={category.title} style={styles.categoryStatsRow}>
-            <View style={styles.categoryStatsTop}>
-              <View style={styles.categoryNameBlock}>
-                <Text style={styles.categoryStatsName} allowFontScaling={false}>
-                  {category.title}
-                </Text>
-
-                <Text style={styles.categoryStatsPercent} allowFontScaling={false}>
-                  {category.percent}% от суммы
-                </Text>
-              </View>
-
-              <Text style={styles.categoryStatsAmount} allowFontScaling={false}>
-                {formatCurrency(category.amount)}
-              </Text>
-            </View>
-
-            <View style={styles.categoryStatsTrack}>
-              <View
-                style={[
-                  styles.categoryStatsFill,
-                  {
-                    width: `${category.percent}%`,
-                    backgroundColor: color,
-                  },
-                ]}
-              />
-            </View>
-          </View>
-        ))
-      )}
-    </View>
-  );
-
-  const renderActorStats = () => (
-    <View style={styles.statsBlockCard}>
-      <Text style={styles.statsBlockTitle} allowFontScaling={false}>
-        Активность участников
-      </Text>
-
-      {stats.actorStats.length === 0 ? (
-        <Text style={styles.statsEmptyText} allowFontScaling={false}>
-          Операций пока нет
-        </Text>
-      ) : (
-        stats.actorStats.map((actor) => (
-          <View key={actor.id} style={styles.actorStatsRow}>
-            <View style={styles.actorStatsAvatar}>
-              <Text style={styles.actorStatsAvatarText} allowFontScaling={false}>
-                {actor.initials}
-              </Text>
-            </View>
-
-            <View style={styles.actorStatsTextBlock}>
-              <Text style={styles.actorStatsName} allowFontScaling={false}>
-                {actor.name}
-              </Text>
-
-              <Text style={styles.actorStatsSubtitle} allowFontScaling={false}>
-                Доходы {formatCurrency(actor.income)} · Расходы {formatCurrency(actor.expense)}
-              </Text>
-            </View>
-          </View>
-        ))
-      )}
-    </View>
-  );
 
   const renderStats = () => (
     <>
-      <View style={styles.statsHeroCard}>
-        <View style={styles.statsHeroTopRow}>
-          <View style={styles.statsHeroTextBlock}>
-            <Text style={styles.statsHeroLabel} allowFontScaling={false}>
-              Финансовый результат
-            </Text>
+      <View style={styles.statsMetricsGrid}>
+        <View style={styles.statsMetricColumnLeft}>
+          {renderStatsMetricCard({
+            title: 'Доходы',
+            value: formatCurrency(stats.totalIncome),
+            subtitle: `${stats.incomeOperationsCount} операций`,
+            icon: 'arrow-up-outline',
+            color: '#20B846',
+          })}
+        </View>
 
-            <Text
-              style={[
-                styles.statsHeroValue,
-                stats.netAmount < 0 && styles.statsHeroValueNegative,
-              ]}
-              allowFontScaling={false}
-              numberOfLines={1}
-            >
-              {stats.netAmount >= 0 ? '+' : '-'}
-              {formatCurrency(Math.abs(stats.netAmount))}
-            </Text>
-
-            <Text style={styles.statsHeroSubtitle} allowFontScaling={false}>
-              {stats.netAmount >= 0
-                ? `Сохранено ${stats.savingPercent}% доходов за период`
-                : 'Расходы превысили доходы за период'}
-            </Text>
-          </View>
-
-          <View style={styles.statsHeroIcon}>
-            <Ionicons name="analytics-outline" size={25} color="#FFFFFF" />
-          </View>
+        <View style={styles.statsMetricColumnRight}>
+          {renderStatsMetricCard({
+            title: 'Расходы',
+            value: formatCurrency(stats.totalExpense),
+            subtitle: `${stats.expenseOperationsCount} операций`,
+            icon: 'arrow-down-outline',
+            color: '#EF4444',
+          })}
         </View>
       </View>
 
-      {renderInsightCard()}
-
-      <View style={styles.statsMetricsGrid}>
-        {renderStatsMetricCard({
-          title: 'Доходы',
-          value: formatCurrency(stats.totalIncome),
-          subtitle: `${stats.incomeOperationsCount} операций`,
-          icon: 'arrow-down-outline',
-          color: '#20B846',
-        })}
-
-        {renderStatsMetricCard({
-          title: 'Расходы',
-          value: formatCurrency(stats.totalExpense),
-          subtitle: `${stats.expenseOperationsCount} операций`,
-          icon: 'arrow-up-outline',
-          color: '#EF4444',
-        })}
-      </View>
-
-      <View style={styles.statsMetricsGrid}>
-        {renderStatsMetricCard({
-          title: 'Средний доход',
-          value: formatCurrency(stats.averageIncome),
-          subtitle: 'на одну операцию',
-          icon: 'trending-up-outline',
-          color: '#20B846',
-        })}
-
-        {renderStatsMetricCard({
-          title: 'Средний расход',
-          value: formatCurrency(stats.averageExpense),
-          subtitle: stats.largestExpense
-            ? `макс. ${stats.largestExpense.title}`
-            : 'на одну операцию',
-          icon: 'trending-down-outline',
-          color: '#EF4444',
-        })}
-      </View>
-
-      {renderCashflowChart()}
-
-      {renderStatsProgress({
-        title: 'Нагрузка расходов',
-        percent: stats.expenseLoadPercent,
-        leftText: `Расходы ${formatCurrency(stats.totalExpense)}`,
-        rightText: `Доходы ${formatCurrency(stats.totalIncome)}`,
-        color: '#EF4444',
-      })}
-
-      {renderStatsProgress({
-        title: 'Прогресс целей',
-        percent: stats.goalsProgressPercent,
-        leftText: `Собрано ${formatCurrency(stats.goalsCurrentAmount)}`,
-        rightText: `Цель ${formatCurrency(stats.goalsTargetAmount)}`,
-        color: MAIN_COLOR,
-      })}
-
-      {renderCategoryStats({
-        title: 'Доходы по категориям',
-        items: stats.incomeCategoryStats,
-        emptyText: 'Доходов пока нет',
-        color: '#20B846',
-      })}
-
-      {renderCategoryStats({
-        title: 'Расходы по категориям',
-        items: stats.expenseCategoryStats,
-        emptyText: 'Расходов пока нет',
-        color: '#EF4444',
-      })}
-
-      {renderActorStats()}
+      {renderExpenseDiagram()}
     </>
   );
 
@@ -1558,10 +1456,7 @@ export default function FinanceScreen({ navigation }) {
           >
             <Ionicons name="add" size={20} color="#FFFFFF" />
 
-            <Text
-              style={styles.createSpaceButtonText}
-              allowFontScaling={false}
-            >
+            <Text style={styles.createSpaceButtonText} allowFontScaling={false}>
               Создать ячейку
             </Text>
           </TouchableOpacity>
@@ -1620,10 +1515,7 @@ export default function FinanceScreen({ navigation }) {
         return (
           <TouchableOpacity
             key={category.id}
-            style={[
-              styles.categoryChip,
-              isSelected && styles.categoryChipActive,
-            ]}
+            style={[styles.categoryChip, isSelected && styles.categoryChipActive]}
             activeOpacity={0.75}
             onPress={() => {
               setOperationCategory(category);
@@ -1720,10 +1612,7 @@ export default function FinanceScreen({ navigation }) {
             return (
               <TouchableOpacity
                 key={member.id}
-                style={[
-                  styles.memberChip,
-                  isSelected && styles.memberChipActive,
-                ]}
+                style={[styles.memberChip, isSelected && styles.memberChipActive]}
                 activeOpacity={0.75}
                 onPress={() => toggleNewGoalMember(member.id)}
               >
@@ -1772,12 +1661,7 @@ export default function FinanceScreen({ navigation }) {
               </Text>
             </View>
 
-            <View
-              style={[
-                styles.checkbox,
-                isSelected && styles.checkboxActive,
-              ]}
-            >
+            <View style={[styles.checkbox, isSelected && styles.checkboxActive]}>
               {isSelected && (
                 <Ionicons name="checkmark" size={16} color="#FFFFFF" />
               )}
@@ -2623,24 +2507,24 @@ const styles = StyleSheet.create({
   },
 
   operationRow: {
-    minHeight: 68,
+    minHeight: 62,
     flexDirection: 'row',
     alignItems: 'center',
   },
 
   operationAvatar: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     backgroundColor: '#F3ECFF',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
+    marginRight: 11,
   },
 
   operationAvatarText: {
     fontFamily: fontFamily.medium,
-    fontSize: fontSize.bodyL,
+    fontSize: fontSize.bodyM,
     color: MAIN_COLOR,
   },
 
@@ -2650,13 +2534,13 @@ const styles = StyleSheet.create({
   },
 
   operationTitle: {
-    fontFamily: fontFamily.regular,
+    fontFamily: fontFamily.medium,
     fontSize: fontSize.bodyM,
     color: '#262626',
   },
 
   operationSubtitle: {
-    marginTop: 4,
+    marginTop: 3,
     fontFamily: fontFamily.regular,
     fontSize: fontSize.caption,
     color: '#858585',
@@ -2676,115 +2560,37 @@ const styles = StyleSheet.create({
   },
 
   emptyLightText: {
-    paddingVertical: 14,
+    paddingVertical: 18,
     fontFamily: fontFamily.regular,
     fontSize: fontSize.bodyM,
     color: '#858585',
   },
 
-  statsHeroCard: {
-    borderRadius: 28,
-    backgroundColor: '#202020',
-    padding: 20,
-    marginTop: 22,
-    marginBottom: 12,
-  },
-
-  statsHeroTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-
-  statsHeroTextBlock: {
-    flex: 1,
-    paddingRight: 14,
-  },
-
-  statsHeroLabel: {
-    fontFamily: fontFamily.regular,
-    fontSize: fontSize.bodyM,
-    color: '#A7A7A7',
-    marginBottom: 8,
-  },
-
-  statsHeroValue: {
-    fontFamily: fontFamily.bold || fontFamily.medium,
-    fontWeight: '800',
-    fontSize: 32,
-    color: '#20B846',
-    letterSpacing: -0.8,
-  },
-
-  statsHeroValueNegative: {
-    color: '#EF4444',
-  },
-
-  statsHeroIcon: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: MAIN_COLOR,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
-  statsHeroSubtitle: {
-    marginTop: 10,
-    fontFamily: fontFamily.regular,
-    fontSize: fontSize.caption,
-    color: '#DADADA',
-  },
-
-  insightCard: {
-    borderRadius: 24,
-    backgroundColor: '#F7F7F7',
-    padding: 18,
-    marginBottom: 12,
-  },
-
-  insightTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-
-  insightIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: '#F3ECFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-
-  insightTitle: {
-    flex: 1,
-    fontFamily: fontFamily.medium,
-    fontSize: fontSize.bodyL,
-    color: '#262626',
-  },
-
-  insightText: {
-    fontFamily: fontFamily.regular,
-    fontSize: fontSize.bodyM,
-    lineHeight: 22,
-    color: '#525252',
-  },
-
   statsMetricsGrid: {
     flexDirection: 'row',
-    gap: 8,
+    width: '100%',
+    marginTop: 18,
     marginBottom: 12,
+  },
+
+  statsMetricColumnLeft: {
+    width: '50%',
+    paddingRight: 5,
+  },
+
+  statsMetricColumnRight: {
+    width: '50%',
+    paddingLeft: 5,
   },
 
   statsMetricCard: {
-    flex: 1,
+    width: '100%',
     minHeight: 138,
     borderRadius: 24,
     backgroundColor: '#F7F7F7',
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    justifyContent: 'center',
   },
 
   statsMetricIcon: {
@@ -2817,353 +2623,254 @@ const styles = StyleSheet.create({
     color: '#A1A1A1',
   },
 
-  chartCard: {
+  expenseDiagramCard: {
     borderRadius: 24,
     backgroundColor: '#F7F7F7',
-    padding: 18,
-    marginBottom: 12,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 18,
+    marginBottom: 14,
   },
 
-  chartHeader: {
+  expenseDiagramHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     marginBottom: 18,
   },
 
-  chartHeaderTextBlock: {
-    flex: 1,
-    paddingRight: 10,
-  },
-
-  chartTitle: {
+  expenseDiagramTitle: {
     fontFamily: fontFamily.medium,
     fontSize: fontSize.bodyL,
     color: '#262626',
   },
 
-  chartSubtitle: {
+  expenseDiagramSubtitle: {
     marginTop: 4,
     fontFamily: fontFamily.regular,
     fontSize: fontSize.caption,
     color: '#858585',
   },
 
-  chartLegend: {
-    alignItems: 'flex-end',
-  },
-
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 5,
-  },
-
-  legendDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 5,
-  },
-
-  legendText: {
-    fontFamily: fontFamily.regular,
-    fontSize: 11,
-    color: '#858585',
-  },
-
-  chartBody: {
-    height: 164,
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-  },
-
-  chartColumn: {
-    flex: 1,
-    alignItems: 'center',
-  },
-
-  chartBars: {
-    height: 132,
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'center',
-    marginBottom: 10,
-  },
-
-  chartBar: {
-    width: 12,
-    borderTopLeftRadius: 7,
-    borderTopRightRadius: 7,
-    marginHorizontal: 3,
-  },
-
-  chartIncomeBar: {
-    backgroundColor: '#20B846',
-  },
-
-  chartExpenseBar: {
-    backgroundColor: '#EF4444',
-  },
-
-  chartLabel: {
-    fontFamily: fontFamily.regular,
-    fontSize: fontSize.caption,
-    color: '#858585',
-  },
-
-  statsProgressCard: {
-    borderRadius: 24,
-    backgroundColor: '#F7F7F7',
-    padding: 18,
-    marginBottom: 12,
-  },
-
-  statsProgressHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-
-  statsProgressTitle: {
-    fontFamily: fontFamily.medium,
-    fontSize: fontSize.bodyM,
-    color: '#262626',
-  },
-
-  statsProgressPercent: {
-    fontFamily: fontFamily.medium,
-    fontSize: fontSize.bodyM,
-    color: MAIN_COLOR,
-  },
-
-  statsProgressTrack: {
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: '#E9E9E9',
-    overflow: 'hidden',
-    marginTop: 14,
-  },
-
-  statsProgressFill: {
-    height: '100%',
-    borderRadius: 6,
-  },
-
-  statsProgressFooter: {
-    marginTop: 10,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-
-  statsProgressFooterText: {
-    fontFamily: fontFamily.regular,
-    fontSize: fontSize.caption,
-    color: '#858585',
-  },
-
-  statsBlockCard: {
-    borderRadius: 24,
-    backgroundColor: '#F7F7F7',
-    padding: 18,
-    marginBottom: 12,
-  },
-
-  statsBlockTitle: {
-    fontFamily: fontFamily.medium,
-    fontSize: fontSize.bodyL,
-    color: '#262626',
-    marginBottom: 14,
-  },
-
-  statsEmptyText: {
-    fontFamily: fontFamily.regular,
-    fontSize: fontSize.bodyM,
-    color: '#858585',
-  },
-
-  categoryStatsRow: {
-    marginBottom: 14,
-  },
-
-  categoryStatsTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 7,
-  },
-
-  categoryNameBlock: {
-    flex: 1,
-    paddingRight: 12,
-  },
-
-  categoryStatsName: {
-    fontFamily: fontFamily.regular,
-    fontSize: fontSize.bodyM,
-    color: '#262626',
-  },
-
-  categoryStatsPercent: {
-    marginTop: 2,
-    fontFamily: fontFamily.regular,
-    fontSize: fontSize.caption,
-    color: '#858585',
-  },
-
-  categoryStatsAmount: {
-    fontFamily: fontFamily.medium,
-    fontSize: fontSize.bodyM,
-    color: '#262626',
-  },
-
-  categoryStatsTrack: {
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#E9E9E9',
-    overflow: 'hidden',
-  },
-
-  categoryStatsFill: {
-    height: '100%',
-    borderRadius: 5,
-  },
-
-  actorStatsRow: {
-    minHeight: 62,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-
-  actorStatsAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+  expenseDiagramIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     backgroundColor: '#F3ECFF',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
   },
 
-  actorStatsAvatarText: {
+  expenseDonutWrapper: {
+    alignSelf: 'center',
+    width: 190,
+    height: 190,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+
+  expenseDonutCenter: {
+    position: 'absolute',
+    width: 112,
+    height: 112,
+    borderRadius: 56,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+  },
+
+  expenseDonutValue: {
     fontFamily: fontFamily.medium,
-    fontSize: fontSize.bodyM,
-    color: MAIN_COLOR,
+    fontSize: fontSize.bodyL,
+    color: '#262626',
+    textAlign: 'center',
   },
 
-  actorStatsTextBlock: {
+  expenseDonutLabel: {
+    marginTop: 3,
+    fontFamily: fontFamily.regular,
+    fontSize: fontSize.caption,
+    color: '#858585',
+  },
+
+  expenseCategoriesList: {
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+  },
+
+  expenseCategoryRow: {
+    minHeight: 58,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+
+  expenseCategoryLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingRight: 10,
+  },
+
+  expenseCategoryColor: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginRight: 10,
+  },
+
+  expenseCategoryNameBlock: {
     flex: 1,
   },
 
-  actorStatsName: {
+  expenseCategoryName: {
     fontFamily: fontFamily.medium,
     fontSize: fontSize.bodyM,
     color: '#262626',
   },
 
-  actorStatsSubtitle: {
-    marginTop: 4,
+  expenseCategoryPercent: {
+    marginTop: 3,
     fontFamily: fontFamily.regular,
     fontSize: fontSize.caption,
+    color: '#A1A1A1',
+  },
+
+  expenseCategoryAmount: {
+    maxWidth: 118,
+    textAlign: 'right',
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.bodyM,
+    color: '#262626',
+  },
+
+  expenseEmptyBox: {
+    minHeight: 190,
+    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+
+  expenseEmptyIcon: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: '#F3ECFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+
+  expenseEmptyTitle: {
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.bodyL,
+    color: '#262626',
+    marginBottom: 6,
+  },
+
+  expenseEmptyText: {
+    textAlign: 'center',
+    fontFamily: fontFamily.regular,
+    fontSize: fontSize.bodyM,
+    lineHeight: 21,
     color: '#858585',
   },
 
   floatingButton: {
     position: 'absolute',
-    right: 18,
-    bottom: 108,
-    width: 58,
-    height: 58,
-    borderRadius: 29,
+    right: 4,
+    bottom: 28,
+    width: 66,
+    height: 66,
+    borderRadius: 33,
     backgroundColor: MAIN_COLOR,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: MAIN_COLOR,
-    shadowOffset: {
-      width: 0,
-      height: 8,
-    },
-    shadowOpacity: 0.28,
-    shadowRadius: 12,
-    elevation: 7,
   },
 
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.72)',
+    backgroundColor: 'rgba(0, 0, 0, 0.42)',
     justifyContent: 'center',
-    paddingHorizontal: 34,
+    paddingHorizontal: 22,
   },
 
   modalCard: {
-    borderRadius: 34,
+    borderRadius: 28,
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 28,
-    paddingTop: 24,
-    paddingBottom: 28,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 18,
   },
 
   modalTitle: {
-    textAlign: 'center',
     fontFamily: fontFamily.medium,
-    fontSize: fontSize.titleM,
+    fontSize: fontSize.titleS,
     color: '#262626',
-    marginBottom: 24,
+    marginBottom: 14,
   },
 
   spacePickerItem: {
-    minHeight: 62,
+    minHeight: 66,
+    borderRadius: 22,
+    backgroundColor: '#F7F7F7',
     flexDirection: 'row',
     alignItems: 'center',
+    paddingHorizontal: 14,
+    marginBottom: 9,
   },
 
   spacePickerColor: {
     width: 24,
-    height: 12,
-    borderRadius: 3,
-    marginRight: 12,
+    height: 24,
+    borderRadius: 8,
     backgroundColor: MAIN_COLOR,
+    marginRight: 12,
   },
 
   spacePickerTextBlock: {
     flex: 1,
-    paddingRight: 12,
+    paddingRight: 10,
   },
 
   spacePickerTitle: {
-    fontFamily: fontFamily.regular,
+    fontFamily: fontFamily.medium,
     fontSize: fontSize.bodyM,
     color: '#262626',
   },
 
   spacePickerTitleActive: {
-    fontFamily: fontFamily.medium,
+    color: MAIN_COLOR,
   },
 
   spacePickerSubtitle: {
-    marginTop: 4,
+    marginTop: 3,
     fontFamily: fontFamily.regular,
     fontSize: fontSize.caption,
     color: '#858585',
   },
 
   spacePickerArrow: {
-    width: 62,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: '#F0F0F0',
-    justifyContent: 'center',
-    alignItems: 'center',
+    width: 28,
+    alignItems: 'flex-end',
   },
 
   createSpaceButton: {
-    marginTop: 22,
-    height: 50,
-    borderRadius: 20,
+    minHeight: 50,
+    borderRadius: 22,
     backgroundColor: MAIN_COLOR,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
+    marginTop: 4,
   },
 
   createSpaceButtonText: {
@@ -3302,7 +3009,6 @@ const styles = StyleSheet.create({
   chipsWrap: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
     marginBottom: 16,
   },
 
@@ -3313,6 +3019,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 14,
+    marginRight: 8,
+    marginBottom: 8,
   },
 
   categoryChipActive: {
@@ -3337,6 +3045,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 14,
     flexDirection: 'row',
+    marginRight: 8,
+    marginBottom: 8,
   },
 
   addCategoryChipText: {
@@ -3374,7 +3084,6 @@ const styles = StyleSheet.create({
   membersWrap: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
     marginBottom: 18,
   },
 
@@ -3386,6 +3095,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingLeft: 5,
     paddingRight: 13,
+    marginRight: 8,
+    marginBottom: 8,
   },
 
   memberChipActive: {

@@ -351,11 +351,7 @@ export default function ProfileScreen({ navigation }) {
                 iconColor="#9456FE"
               />
 
-              {!avatarUrl && (
-                <Text style={styles.avatarLetters} allowFontScaling={false}>
-                  {getInitials()}
-                </Text>
-              )}
+             
 
               <View style={styles.avatarEditButton}>
                 {avatarUploading ? (

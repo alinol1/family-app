@@ -220,6 +220,20 @@ export default function SOSScreen({ navigation }) {
     );
   };
 
+  const getActiveSOSId = (signal) => {
+    if (!signal) {
+      return null;
+    }
+
+    return (
+      signal.id ||
+      signal.sos_id ||
+      signal.signal_id ||
+      signal.pk ||
+      null
+    );
+  };
+
   const getActiveSOSLocation = () => {
     if (!activeSignal) {
       return null;
@@ -636,21 +650,58 @@ export default function SOSScreen({ navigation }) {
   };
 
   const cancelSOSRequest = async () => {
-    if (!activeSignal?.id || cancellingSOSRef.current) return;
+    if (cancellingSOSRef.current) {
+      return;
+    }
 
     cancellingSOSRef.current = true;
 
+    cancelProgress.stopAnimation();
+    cancelProgress.setValue(0);
+    setIsHoldingCancel(false);
+
     try {
-      await cancelSOS(activeSignal.id);
+      let signal = activeSignal;
+      let signalId = getActiveSOSId(signal);
+
+      if (!signalId) {
+        const freshSignal = await getActiveSOS();
+
+        if (freshSignal && isSignalActive(freshSignal)) {
+          signal = freshSignal;
+          signalId = getActiveSOSId(freshSignal);
+          setActiveSignal(freshSignal);
+        }
+      }
+
+      if (!signalId) {
+        Alert.alert(
+          'SOS',
+          'Не удалось найти активный SOS-сигнал для отмены. Обновите экран и попробуйте снова.'
+        );
+        return;
+      }
+
+      await cancelSOS(signalId);
+
       resetToNormal();
     } catch (error) {
       console.log('Ошибка отмены SOS:', error.response?.data || error);
 
+      const status = error.response?.status;
+      const serverMessage =
+        error.response?.data?.error ||
+        error.response?.data?.detail ||
+        error.response?.data?.message;
+
+      if (status === 404) {
+        resetToNormal();
+        return;
+      }
+
       Alert.alert(
         'SOS',
-        error.response?.data?.error ||
-          error.response?.data?.detail ||
-          'Не удалось отменить SOS-сигнал'
+        serverMessage || 'Не удалось отменить SOS-сигнал'
       );
     } finally {
       cancellingSOSRef.current = false;
